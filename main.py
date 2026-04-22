@@ -21,6 +21,7 @@ from card_memory_tab import CardMemoryTab
 from serial_connection import SerialConnectionDialog
 from serial_handler import SerialHandler
 from pfaff_protocol import PFAFFProtocol
+from preferences_dialog import PreferencesDialog
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -37,6 +38,8 @@ class PfaffCreativeEmulator(QMainWindow):
         # Initialize machine state
         self.machine_state = MachineState()
         self.current_file = None
+        self._config = self._load_config()
+        self._recent_files: list = self._config.get("recent_files", [])
         
         # Initialize serial handler and protocol
         self.serial_handler = SerialHandler()
@@ -47,8 +50,10 @@ class PfaffCreativeEmulator(QMainWindow):
         # Setup UI
         self.setup_ui()
         self.create_menu()
-        
+
         logger.info("Application started")
+        self._try_auto_connect()
+        self._try_auto_open_state()
     
     def setup_ui(self):
         """Setup main UI layout"""
@@ -132,15 +137,19 @@ class PfaffCreativeEmulator(QMainWindow):
         new_action.triggered.connect(self.new_file)
         file_menu.addAction(new_action)
         
-        open_action = QAction("Open", self)
+        open_action = QAction("Open...", self)
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
+
+        self._recent_menu = QMenu("Open recent", self)
+        file_menu.addMenu(self._recent_menu)
+        self._rebuild_recent_menu()
         
         save_action = QAction("Save", self)
         save_action.triggered.connect(self.save_file)
         file_menu.addAction(save_action)
         
-        save_as_action = QAction("Save As", self)
+        save_as_action = QAction("Save As...", self)
         save_as_action.triggered.connect(self.save_file_as)
         file_menu.addAction(save_as_action)
         
@@ -155,13 +164,13 @@ class PfaffCreativeEmulator(QMainWindow):
 
         log_window_submenu = QMenu("Log window", self)
         log_menu.addMenu(log_window_submenu)
-        self._build_log_level_submenu(
+        self._log_window_actions = self._build_log_level_submenu(
             log_window_submenu, self._on_log_level_toggled
         )
 
         python_console_submenu = QMenu("Python console", self)
         log_menu.addMenu(python_console_submenu)
-        self._build_log_level_submenu(
+        self._python_console_actions = self._build_log_level_submenu(
             python_console_submenu, self._on_python_log_level_toggled
         )
 
@@ -174,7 +183,7 @@ class PfaffCreativeEmulator(QMainWindow):
 
         log_to_file_submenu = QMenu("Log to file", self)
         log_menu.addMenu(log_to_file_submenu)
-        self._build_log_level_submenu(
+        self._log_to_file_level_actions = self._build_log_level_submenu(
             log_to_file_submenu, self._on_file_log_level_toggled
         )
 
@@ -188,7 +197,137 @@ class PfaffCreativeEmulator(QMainWindow):
         close_connection_action = QAction("Close Connection", self)
         close_connection_action.triggered.connect(self.close_serial_connection)
         connection_menu.addAction(close_connection_action)
-    
+
+        # Machine menu
+        machine_menu = menubar.addMenu("Machine")
+        model_submenu = QMenu("Model", self)
+        machine_menu.addMenu(model_submenu)
+
+        self._model_7570_action = QAction("PFAFF Creative 7570", self)
+        self._model_7570_action.setCheckable(True)
+        self._model_7570_action.setChecked(True)
+        self._model_7570_action.toggled.connect(self._on_model_toggled)
+        model_submenu.addAction(self._model_7570_action)
+
+        pmemory_submenu = QMenu("P-Memory", self)
+        machine_menu.addMenu(pmemory_submenu)
+
+        clear_all_action = QAction("Clear all", self)
+        clear_all_action.triggered.connect(self._clear_all_pmemory)
+        pmemory_submenu.addAction(clear_all_action)
+
+        # Settings menu
+        settings_menu = menubar.addMenu("Settings")
+        preferences_action = QAction("Preferences", self)
+        preferences_action.triggered.connect(self._open_preferences)
+        settings_menu.addAction(preferences_action)
+
+        self._apply_config_to_menu()
+
+    # ------------------------------------------------------------------
+    # Config persistence
+    # ------------------------------------------------------------------
+
+    _CONFIG_FILE = "config.json"
+
+    def _load_config(self) -> dict:
+        """Load configuration from JSON file, merging missing keys with defaults."""
+        default = {
+            "recent_files": [],
+            "log_window":      {"warning": True, "info": True, "debug": True},
+            "python_console":  {"warning": True, "info": True, "debug": True},
+            "log_to_file":     {"enabled": False, "warning": True, "info": True, "debug": True},
+            "serial":          {"port": None, "baudrate": 4800},
+            "machine":         {"model": "PFAFF Creative 7570"},
+            "general":         {"auto_connect": False, "open_state_on_start": False},
+        }
+        config_path = Path(__file__).parent / self._CONFIG_FILE
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for key, val in default.items():
+                    if key not in data:
+                        data[key] = val
+                    elif isinstance(val, dict):
+                        for k, v in val.items():
+                            data[key].setdefault(k, v)
+                return data
+            except Exception as e:
+                import logging as _log
+                _log.getLogger(__name__).warning(f"Failed to load config: {e}")
+        return default
+
+    def _save_config(self):
+        """Persist current configuration to JSON file."""
+        config_path = Path(__file__).parent / self._CONFIG_FILE
+        try:
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(self._config, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save config: {e}")
+
+    def _apply_config_to_menu(self):
+        """Apply loaded configuration to menu checked states (called once after menu creation)."""
+        for level, key in self._LEVEL_KEY.items():
+            if not self._config["log_window"].get(key, True):
+                self._log_window_actions[level].setChecked(False)
+            if not self._config["python_console"].get(key, True):
+                self._python_console_actions[level].setChecked(False)
+        if self._config["log_to_file"].get("enabled", False):
+            self._log_to_file_action.setChecked(True)
+        for level, key in self._LEVEL_KEY.items():
+            if not self._config["log_to_file"].get(key, True):
+                self._log_to_file_level_actions[level].setChecked(False)
+
+    # ------------------------------------------------------------------
+    # Recent-files helpers
+    # ------------------------------------------------------------------
+
+    RECENT_MAX = 20
+
+    def _add_to_recent(self, file_path: str):
+        """Insert *file_path* at the top of the recent-files list and persist."""
+        path = str(Path(file_path).resolve())
+        if path in self._recent_files:
+            self._recent_files.remove(path)
+        self._recent_files.insert(0, path)
+        self._recent_files = self._recent_files[:self.RECENT_MAX]
+        self._config["recent_files"] = self._recent_files
+        self._save_config()
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self):
+        """Rebuild the Open recent submenu from the current list."""
+        self._recent_menu.clear()
+        for path in self._recent_files:
+            action = QAction(path, self)
+            action.triggered.connect(lambda checked, p=path: self._open_recent_file(p))
+            self._recent_menu.addAction(action)
+        self._recent_menu.setEnabled(bool(self._recent_files))
+
+    def _open_recent_file(self, file_path: str):
+        """Open a file from the recent list."""
+        try:
+            self.machine_state.load_from_file(file_path)
+            self.current_file = file_path
+            self.pmemory_tab.update_ui(self.machine_state)
+            self.mmemory_tab.update_ui(self.machine_state)
+            self.card_memory_tab.update_ui(self.machine_state)
+            logger.info(f"File opened: {file_path}")
+            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+            self._add_to_recent(file_path)
+        except Exception as e:
+            logger.error(f"Failed to open file: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
+            # Remove from recent list if the file is no longer accessible
+            path = str(Path(file_path).resolve())
+            if path in self._recent_files:
+                self._recent_files.remove(path)
+                self._config["recent_files"] = self._recent_files
+                self._save_config()
+                self._rebuild_recent_menu()
+
     def new_file(self):
         """Create a new machine state file"""
         self.machine_state = MachineState()
@@ -215,6 +354,7 @@ class PfaffCreativeEmulator(QMainWindow):
                 self.card_memory_tab.update_ui(self.machine_state)
                 logger.info(f"File opened: {file_path}")
                 self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+                self._add_to_recent(file_path)
             except Exception as e:
                 logger.error(f"Failed to open file: {str(e)}")
                 QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
@@ -247,13 +387,19 @@ class PfaffCreativeEmulator(QMainWindow):
                 self.current_file = file_path
                 logger.info(f"File saved as: {file_path}")
                 self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+                self._add_to_recent(file_path)
             except Exception as e:
                 logger.error(f"Failed to save file: {str(e)}")
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
     
     def open_serial_connection(self):
         """Open serial connection dialog"""
-        dialog = SerialConnectionDialog(self)
+        serial_cfg = self._config.get("serial", {})
+        dialog = SerialConnectionDialog(
+            self,
+            last_port=serial_cfg.get("port"),
+            last_baudrate=serial_cfg.get("baudrate", 4800)
+        )
         if dialog.exec_():
             port, baudrate = dialog.get_selected_connection()
             if port is None:
@@ -263,6 +409,8 @@ class PfaffCreativeEmulator(QMainWindow):
             
             logger.info(f"Opening serial connection: {port} at {baudrate} baud")
             if self.serial_handler.connect(port, baudrate):
+                self._config["serial"] = {"port": port, "baudrate": baudrate}
+                self._save_config()
                 QMessageBox.information(
                     self, 
                     "Connection", 
@@ -281,27 +429,91 @@ class PfaffCreativeEmulator(QMainWindow):
         logger.info("Serial connection closed")
         QMessageBox.information(self, "Connection", "Serial connection closed")
     
-    def _build_log_level_submenu(self, menu: QMenu, slot):
-        """Add Warning / Info / Debug checkable actions to *menu*, connected to *slot*."""
+    _LEVEL_KEY = {logging.WARNING: "warning", logging.INFO: "info", logging.DEBUG: "debug"}
+
+    def _build_log_level_submenu(self, menu: QMenu, slot) -> dict:
+        """Add Warning / Info / Debug checkable actions to *menu*, connected to *slot*.
+        Returns a dict mapping logging level int to QAction."""
+        actions = {}
         for label, level in (("Warning", logging.WARNING), ("Info", logging.INFO), ("Debug", logging.DEBUG)):
             action = QAction(label, self)
             action.setCheckable(True)
             action.setChecked(True)
             action.toggled.connect(lambda checked, lvl=level: slot(lvl, checked))
             menu.addAction(action)
+            actions[level] = action
+        return actions
+
+    def _open_preferences(self):
+        """Open the Preferences dialog and save any changes."""
+        dlg = PreferencesDialog(self._config, parent=self)
+        if dlg.exec_():
+            self._save_config()
+
+    def _try_auto_open_state(self):
+        """Load the most recent machine state file at startup if configured."""
+        if not self._config.get("general", {}).get("open_state_on_start", False):
+            return
+        if not self._recent_files:
+            return
+        file_path = self._recent_files[0]
+        try:
+            self.machine_state.load_from_file(file_path)
+            self.current_file = file_path
+            self.pmemory_tab.update_ui(self.machine_state)
+            self.mmemory_tab.update_ui(self.machine_state)
+            self.card_memory_tab.update_ui(self.machine_state)
+            logger.info(f"Auto-loaded machine state: {file_path}")
+            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+        except Exception as e:
+            logger.warning(f"Auto-load machine state failed: {e}")
+
+    def _try_auto_connect(self):
+        """Attempt automatic serial connection at startup if configured."""
+        if not self._config.get("general", {}).get("auto_connect", False):
+            return
+        serial_cfg = self._config.get("serial", {})
+        port = serial_cfg.get("port")
+        baudrate = serial_cfg.get("baudrate", 4800)
+        if not port:
+            return
+        import serial.tools.list_ports
+        available = [p.device for p in serial.tools.list_ports.comports()]
+        if port not in available:
+            logger.info(f"Auto-connect: port {port} not available, skipping")
+            return
+        logger.info(f"Auto-connect: opening {port} at {baudrate} baud")
+        if not self.serial_handler.connect(port, baudrate):
+            logger.warning(f"Auto-connect: failed to open {port}")
+
+    def _on_model_toggled(self, checked: bool):
+        """Keep model action checked and persist the selected model."""
+        self._model_7570_action.setChecked(True)
+        self._config.setdefault("machine", {})["model"] = "PFAFF Creative 7570"
+        self._save_config()
 
     def _on_log_level_toggled(self, level: int, checked: bool):
         """Show or hide a log level in the Qt console."""
         self.console_handler.set_level_visible(level, checked)
+        key = self._LEVEL_KEY.get(level)
+        if key:
+            self._config["log_window"][key] = checked
+            self._save_config()
 
     def _on_python_log_level_toggled(self, level: int, checked: bool):
         """Show or hide a log level in the Python (stdout) console."""
         self.python_console_handler.set_level_visible(level, checked)
+        key = self._LEVEL_KEY.get(level)
+        if key:
+            self._config["python_console"][key] = checked
+            self._save_config()
 
     def _on_log_to_file_toggled(self, checked: bool):
         """Enable or disable logging to file."""
         import datetime
         import os
+        self._config["log_to_file"]["enabled"] = checked
+        self._save_config()
         root_logger = logging.getLogger()
         if checked:
             if self.file_handler is None:
@@ -327,6 +539,10 @@ class PfaffCreativeEmulator(QMainWindow):
         """Show or hide a log level in the file log."""
         if self.file_handler is not None:
             self.file_handler.set_level_visible(level, checked)
+        key = self._LEVEL_KEY.get(level)
+        if key:
+            self._config["log_to_file"][key] = checked
+            self._save_config()
 
     def _show_console_context_menu(self, pos):
         """Show right-click context menu on the log console."""
@@ -336,6 +552,16 @@ class PfaffCreativeEmulator(QMainWindow):
         clear_action.triggered.connect(self.console.clear)
         menu.addAction(clear_action)
         menu.exec_(self.console.mapToGlobal(pos))
+
+    def _clear_all_pmemory(self):
+        """Clear all P-Memory slots, resetting them to Empty."""
+        for slot in self.machine_state.p_memory_slots:
+            slot.slot_type = "Empty"
+            slot.data = []
+            slot.header_raw = ""
+            slot.pattern_raw = ""
+        self.pmemory_tab.update_ui(self.machine_state)
+        logger.info("P-Memory: all slots cleared")
 
     def _on_pmemory_changed(self):
         """Refresh P-Memory tab after a delete or write operation"""

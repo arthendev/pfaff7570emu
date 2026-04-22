@@ -13,12 +13,14 @@ import serial.tools.list_ports
 class SerialConnectionDialog(QDialog):
     """Dialog for selecting serial connection parameters"""
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, last_port=None, last_baudrate=None):
         super().__init__(parent)
         self.setWindowTitle("Open Serial Connection")
         self.setModal(True)
         self.selected_port = None
         self.selected_baudrate = None
+        self._last_port = last_port
+        self._last_baudrate = last_baudrate
         self.setup_ui()
     
     def setup_ui(self):
@@ -45,6 +47,10 @@ class SerialConnectionDialog(QDialog):
         self.baudrate_combo = QComboBox()
         self.baudrate_combo.addItem("4800", 4800)
         self.baudrate_combo.addItem("10472", 10472)
+        if self._last_baudrate is not None:
+            idx = self.baudrate_combo.findData(self._last_baudrate)
+            if idx >= 0:
+                self.baudrate_combo.setCurrentIndex(idx)
         baudrate_layout.addWidget(baudrate_label)
         baudrate_layout.addWidget(self.baudrate_combo)
         layout.addLayout(baudrate_layout)
@@ -85,6 +91,10 @@ class SerialConnectionDialog(QDialog):
                     f"{port.device} - {port.description}", 
                     port.device
                 )
+        if self._last_port is not None:
+            idx = self.port_combo.findData(self._last_port)
+            if idx >= 0:
+                self.port_combo.setCurrentIndex(idx)
     
     def get_selected_connection(self):
         """Get selected port and baud rate"""
