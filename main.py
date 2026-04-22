@@ -77,6 +77,8 @@ class PfaffCreativeEmulator(QMainWindow):
         self.console.setReadOnly(True)
         font = QFont("Courier New", 9)
         self.console.setFont(font)
+        self.console.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.console.customContextMenuRequested.connect(self._show_console_context_menu)
         splitter.addWidget(self.console)
         
         # Set splitter sizes (50% upper, 50% lower) - scales with window
@@ -91,13 +93,33 @@ class PfaffCreativeEmulator(QMainWindow):
         self.setup_console_logging()
     
     def setup_console_logging(self):
-        """Redirect logger output to console widget"""
-        from logger import ConsoleHandler
-        console_handler = ConsoleHandler(self.console)
-        console_handler.setLevel(logging.DEBUG)
+        """Redirect logger output to console widget and set up filterable Python console handler"""
+        from logger import ConsoleHandler, FilteringStreamHandler, FilteringFileHandler
+        formatter = logging.Formatter('%(levelname)s - %(name)s - %(message)s')
+
+        # Qt console handler
+        self.console_handler = ConsoleHandler(self.console)
+        self.console_handler.setLevel(logging.DEBUG)
+
+        # Filterable Python (stdout) handler — replaces per-module StreamHandlers
+        self.python_console_handler = FilteringStreamHandler()
+        self.python_console_handler.setLevel(logging.DEBUG)
+        self.python_console_handler.setFormatter(formatter)
+
+        self.file_handler = None  # created on demand when file logging is enabled
+
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
-        root_logger.addHandler(console_handler)
+        root_logger.addHandler(self.console_handler)
+        root_logger.addHandler(self.python_console_handler)
+
+        # Remove StreamHandlers already added to named loggers by setup_logger
+        # so output is not duplicated now that the root handler covers them.
+        for log in list(logging.Logger.manager.loggerDict.values()):
+            if isinstance(log, logging.Logger):
+                for h in list(log.handlers):
+                    if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+                        log.removeHandler(h)
     
     def create_menu(self):
         """Create application menu"""
@@ -128,6 +150,34 @@ class PfaffCreativeEmulator(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
+        # Log menu
+        log_menu = menubar.addMenu("Log")
+
+        log_window_submenu = QMenu("Log window", self)
+        log_menu.addMenu(log_window_submenu)
+        self._build_log_level_submenu(
+            log_window_submenu, self._on_log_level_toggled
+        )
+
+        python_console_submenu = QMenu("Python console", self)
+        log_menu.addMenu(python_console_submenu)
+        self._build_log_level_submenu(
+            python_console_submenu, self._on_python_log_level_toggled
+        )
+
+        log_menu.addSeparator()
+        self._log_to_file_action = QAction("Log to file enabled", self)
+        self._log_to_file_action.setCheckable(True)
+        self._log_to_file_action.setChecked(False)
+        self._log_to_file_action.toggled.connect(self._on_log_to_file_toggled)
+        log_menu.addAction(self._log_to_file_action)
+
+        log_to_file_submenu = QMenu("Log to file", self)
+        log_menu.addMenu(log_to_file_submenu)
+        self._build_log_level_submenu(
+            log_to_file_submenu, self._on_file_log_level_toggled
+        )
+
         # Connection menu
         connection_menu = menubar.addMenu("Connection")
         
@@ -231,6 +281,62 @@ class PfaffCreativeEmulator(QMainWindow):
         logger.info("Serial connection closed")
         QMessageBox.information(self, "Connection", "Serial connection closed")
     
+    def _build_log_level_submenu(self, menu: QMenu, slot):
+        """Add Warning / Info / Debug checkable actions to *menu*, connected to *slot*."""
+        for label, level in (("Warning", logging.WARNING), ("Info", logging.INFO), ("Debug", logging.DEBUG)):
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.toggled.connect(lambda checked, lvl=level: slot(lvl, checked))
+            menu.addAction(action)
+
+    def _on_log_level_toggled(self, level: int, checked: bool):
+        """Show or hide a log level in the Qt console."""
+        self.console_handler.set_level_visible(level, checked)
+
+    def _on_python_log_level_toggled(self, level: int, checked: bool):
+        """Show or hide a log level in the Python (stdout) console."""
+        self.python_console_handler.set_level_visible(level, checked)
+
+    def _on_log_to_file_toggled(self, checked: bool):
+        """Enable or disable logging to file."""
+        import datetime
+        import os
+        root_logger = logging.getLogger()
+        if checked:
+            if self.file_handler is None:
+                logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+                os.makedirs(logs_dir, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                log_path = os.path.join(logs_dir, f"log_{ts}.txt")
+                from logger import FilteringFileHandler
+                formatter = logging.Formatter('%(asctime)s %(levelname)s - %(name)s - %(message)s')
+                self.file_handler = FilteringFileHandler(log_path, encoding='utf-8')
+                self.file_handler.setLevel(logging.DEBUG)
+                self.file_handler.setFormatter(formatter)
+                root_logger.addHandler(self.file_handler)
+                logger.info(f"File logging started: {log_path}")
+        else:
+            if self.file_handler is not None:
+                logger.info("File logging stopped")
+                root_logger.removeHandler(self.file_handler)
+                self.file_handler.close()
+                self.file_handler = None
+
+    def _on_file_log_level_toggled(self, level: int, checked: bool):
+        """Show or hide a log level in the file log."""
+        if self.file_handler is not None:
+            self.file_handler.set_level_visible(level, checked)
+
+    def _show_console_context_menu(self, pos):
+        """Show right-click context menu on the log console."""
+        menu = self.console.createStandardContextMenu()
+        menu.addSeparator()
+        clear_action = QAction("Clear", self)
+        clear_action.triggered.connect(self.console.clear)
+        menu.addAction(clear_action)
+        menu.exec_(self.console.mapToGlobal(pos))
+
     def _on_pmemory_changed(self):
         """Refresh P-Memory tab after a delete or write operation"""
         self.pmemory_tab.update_ui(self.machine_state)

@@ -14,6 +14,8 @@ class MemorySlot:
     slot_id: int
     slot_type: str = "Empty"  # Empty, 9mm, MAXI
     data: List[int] = field(default_factory=list)
+    header_raw: str = ""  # raw header as ASCII string (hex-encoded pairs from machine)
+    pattern_raw: str = ""  # pattern as ASCII string (3-digit x + 2-digit y per point)
     
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
@@ -24,7 +26,9 @@ class MemorySlot:
         return {
             "slot_id": self.slot_id,
             "slot_type": self.slot_type,
-            "data": self.data
+            "data": self.data,
+            "header_raw": self.header_raw,
+            "pattern_raw": self.pattern_raw
         }
     
     @staticmethod
@@ -33,7 +37,9 @@ class MemorySlot:
         return MemorySlot(
             slot_id=data.get("slot_id", 0),
             slot_type=data.get("slot_type", "Empty"),
-            data=data.get("data", [])
+            data=data.get("data", []),
+            header_raw=data.get("header_raw", ""),
+            pattern_raw=data.get("pattern_raw", "")
         )
 
 

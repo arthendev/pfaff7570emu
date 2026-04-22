@@ -109,21 +109,21 @@ class PFAFFProtocol:
 
             elif self._state == self._STATE_WAIT_ACK:
                 if byte == self.CTRL_EOT:
-                    logger.info("EOT received while waiting for ACK — resetting to idle")
+                    logger.info("EOT received while waiting for ACK - resetting to idle")
                     self._state = self._STATE_IDLE
                 elif byte == self.CTRL_ACK:
                     logger.debug("ACK received from host")
                     self._state = self._STATE_IDLE
                 elif byte == self.CTRL_BEL:
-                    logger.warning("CTRL_BEL received while waiting for ACK — aborting wait")
+                    logger.warning("CTRL_BEL received while waiting for ACK - aborting wait")
                     self._state = self._STATE_IDLE
                     response.extend(self.handle_bell_command())
                 else:
-                    logger.warning(f"Unexpected byte 0x{byte:02X} while waiting for ACK — ignored")
+                    logger.warning(f"Unexpected byte 0x{byte:02X} while waiting for ACK - ignored")
 
             elif self._state == self._STATE_READ_WAIT_ACK:
                 if byte == self.CTRL_EOT:
-                    logger.info("EOT received while waiting for read ACK — resetting to idle")
+                    logger.info("EOT received while waiting for read ACK - resetting to idle")
                     self._abort_read()
                 elif byte == self.CTRL_ACK:
                     if self._read_last_chunk_sent:
@@ -138,7 +138,7 @@ class PFAFFProtocol:
 
             elif self._state == self._STATE_READ_WAIT_EOT:
                 if byte == self.CTRL_EOT:
-                    logger.info("Read P-Memory: transfer complete (EOT received) — resetting to idle")
+                    logger.info("Read P-Memory: transfer complete (EOT received) - resetting to idle")
                     self._abort_read()
                 elif byte == self.CTRL_NAK:
                     logger.warning("Read P-Memory: NAK received after last chunk, aborting")
@@ -148,7 +148,7 @@ class PFAFFProtocol:
 
             elif self._state == self._STATE_WRITE_DATA:
                 if byte == self.CTRL_EOT:
-                    logger.info("EOT received during write data — resetting to idle")
+                    logger.info("EOT received during write data - resetting to idle")
                     self._abort_write()
                 elif byte == self.CTRL_BEL:
                     logger.warning("Write P-Memory: aborted by CTRL_BEL")
@@ -157,7 +157,7 @@ class PFAFFProtocol:
                 elif byte == self.CTRL_ETX:
                     # CTRL_ETX after a completed chunk checksum signals end of all chunks
                     if self._write_chunk_buffer:
-                        logger.warning("Write P-Memory: unexpected CTRL_ETX mid-chunk — aborting")
+                        logger.warning("Write P-Memory: unexpected CTRL_ETX mid-chunk - aborting")
                         self._abort_write()
                     else:
                         response.extend(self._commit_write())
@@ -169,7 +169,7 @@ class PFAFFProtocol:
 
             elif self._state == self._STATE_WRITE_CHECKSUM:
                 if byte == self.CTRL_EOT:
-                    logger.info("EOT received during write checksum — resetting to idle")
+                    logger.info("EOT received during write checksum - resetting to idle")
                     self._abort_write()
                 else:
                     self._write_checksum_chars.append(byte)
@@ -178,7 +178,7 @@ class PFAFFProtocol:
 
             elif self._state == self._STATE_WRITE_HEADER:
                 if byte == self.CTRL_EOT:
-                    logger.info("CTRL_EOT received during write header — resetting to idle")
+                    logger.info("CTRL_EOT received during write header - resetting to idle")
                     self._abort_write()
                 elif byte == self.CTRL_BEL:
                     logger.warning("Write P-Memory: header aborted by CTRL_BEL")
@@ -368,6 +368,8 @@ class PFAFFProtocol:
 
         slot.slot_type = "Empty"
         slot.data = []
+        slot.header_raw = ""
+        slot.pattern_raw = ""
         logger.info(f"Delete P-Memory: slot {slot_id} cleared")
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
@@ -430,7 +432,7 @@ class PFAFFProtocol:
             logger.warning(f"Write P-Memory: slot {slot_id} out of range")
             return bytes([self.CTRL_NAK])
 
-        # Valid header — set up write state
+        # Valid header - set up write state
         self._write_slot_id           = slot_id
         self._write_expected_size     = expected_size
         self._write_data_accumulated  = bytearray()
@@ -439,7 +441,7 @@ class PFAFFProtocol:
         self._write_checksum_chars    = bytearray()
         self._state = self._STATE_WRITE_HEADER
 
-        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern — requesting header")
+        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern - requesting header")
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
     def _process_write_header(self) -> bytes:
@@ -486,7 +488,7 @@ class PFAFFProtocol:
         self._write_header = bytearray(header_data)
         self._write_header_buffer = bytearray()
         logger.info(
-            f"Write P-Memory: header received ({len(self._write_header)} bytes) — requesting chunks"
+            f"Write P-Memory: header received ({len(self._write_header)} bytes) - requesting chunks"
         )
         header_ascii = self._write_header.decode('ascii', errors='replace')
         # Separate with spaces every 2 chars for readability
@@ -526,7 +528,7 @@ class PFAFFProtocol:
             self._abort_write()
             return bytes([self.CTRL_NAK])
 
-        # Checksum OK — accumulate chunk and await more data or CTRL_ETX
+        # Checksum OK - accumulate chunk and await more data or CTRL_ETX
         self._write_data_accumulated.extend(self._write_chunk_buffer)
         self._write_chunk_buffer = bytearray()
         logger.debug(
@@ -557,6 +559,8 @@ class PFAFFProtocol:
 
         slot.data = data
         slot.slot_type = "9mm"
+        slot.header_raw = self._write_header.decode('ascii', errors='replace')
+        slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
         pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
         logger.info(
             f"Write P-Memory: slot {self._write_slot_id} written ({len(data)} bytes), "
@@ -573,7 +577,7 @@ class PFAFFProtocol:
                 f"Pattern stats: n={len(data)//2}, n_bytes={len(data)}, "
                 f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
                 f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
-                f"p0_x={xs[0]}, p0_y={ys[0]}, p1_x={xs[1]}, p1_y={ys[1]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
+                f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
             )
 
         self._append_write_log(data)
@@ -607,11 +611,20 @@ class PFAFFProtocol:
                     ys = data[1::2]
                     min_x, max_x = min(xs), max(xs)
                     min_y, max_y = min(ys), max(ys)
+                    d0y_max = max_y - ys[0]
+                    d0y_min = min_y - ys[0]
+                    d0y_min_abs = abs(d0y_min)
+                    dx_max = max(abs(xs[i+1] - xs[i]) for i in range(len(xs) - 1)) if len(xs) >= 2 else 0
+                    dx_min = min(xs[i+1] - xs[i] for i in range(len(xs) - 1)) if len(xs) >= 2 else 0
+                    dx_min_abs = abs(dx_min)
+                    dx_abs = max(dx_max, dx_min_abs)
                     f.write(
                         f"STATISTICS: n={len(data)//2:02X}, n_bytes={len(data):02X}, checksum={self._calculate_checksum(data):02X}, "
                         f"x_min={min_x:02X} x_max={max_x:02X}, span_x={max_x - min_x:02X}, "
                         f"y_min={min_y:02X} y_max={max_y:02X}, span_y={max_y - min_y:02X}, "
-                        f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, p1_x={xs[1]:02X}, p1_y={ys[1]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
+                        f"d0y_max={d0y_max:02X}, d0y_min={d0y_min & 0xFF:02X}, d0y_min_abs={d0y_min_abs:02X}, "
+                        f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, dx_abs={dx_abs:02X}, "
+                        f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
                     )
         except OSError as e:
             logger.warning(f"Write log: could not append to {log_path}: {e}")

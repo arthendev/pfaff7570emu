@@ -27,10 +27,21 @@ class ConsoleHandler(logging.Handler):
     def __init__(self, text_widget: QTextEdit):
         super().__init__()
         self.text_widget = text_widget
-    
+        self.visible_levels = {logging.DEBUG, logging.INFO, logging.WARNING}
+
+    def set_level_visible(self, level: int, visible: bool):
+        """Show or hide messages of the given level in the console."""
+        if visible:
+            self.visible_levels.add(level)
+        else:
+            self.visible_levels.discard(level)
+
     def emit(self, record):
         """Emit a log record to the text widget"""
         try:
+            if record.levelno in (logging.DEBUG, logging.INFO, logging.WARNING) \
+                    and record.levelno not in self.visible_levels:
+                return
             msg = self.format(record)
             # Add timestamp
             timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
@@ -72,21 +83,65 @@ class ConsoleHandler(logging.Handler):
             self.handleError(record)
 
 
+class FilteringStreamHandler(logging.StreamHandler):
+    """StreamHandler that can independently show/hide WARNING, INFO and DEBUG messages."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.visible_levels = {logging.DEBUG, logging.INFO, logging.WARNING}
+
+    def set_level_visible(self, level: int, visible: bool):
+        """Show or hide messages of the given level."""
+        if visible:
+            self.visible_levels.add(level)
+        else:
+            self.visible_levels.discard(level)
+
+    def emit(self, record):
+        if record.levelno in (logging.DEBUG, logging.INFO, logging.WARNING) \
+                and record.levelno not in self.visible_levels:
+            return
+        super().emit(record)
+
+
+class FilteringFileHandler(logging.FileHandler):
+    """FileHandler that can independently show/hide WARNING, INFO and DEBUG messages."""
+
+    def __init__(self, filename, *args, **kwargs):
+        super().__init__(filename, *args, **kwargs)
+        self.visible_levels = {logging.DEBUG, logging.INFO, logging.WARNING}
+
+    def set_level_visible(self, level: int, visible: bool):
+        """Show or hide messages of the given level."""
+        if visible:
+            self.visible_levels.add(level)
+        else:
+            self.visible_levels.discard(level)
+
+    def emit(self, record):
+        if record.levelno in (logging.DEBUG, logging.INFO, logging.WARNING) \
+                and record.levelno not in self.visible_levels:
+            return
+        super().emit(record)
+
+
 def setup_logger(name):
     """Setup logger with console handler"""
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    
-    # Formatter
-    formatter = logging.Formatter('%(levelname)s - %(name)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    
-    # Add handler to logger
-    if not logger.handlers:
+
+    # Skip adding a StreamHandler if the root logger already has one
+    # (i.e. the main window has set up a shared FilteringStreamHandler).
+    root_has_stream = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        for h in logging.getLogger().handlers
+    )
+
+    if not logger.handlers and not root_has_stream:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(levelname)s - %(name)s - %(message)s')
+        console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-    
+
     return logger
