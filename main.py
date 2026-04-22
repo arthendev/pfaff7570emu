@@ -38,6 +38,8 @@ class PfaffCreativeEmulator(QMainWindow):
         # Initialize machine state
         self.machine_state = MachineState()
         self.current_file = None
+        self._modified = False
+        self._title_name = ""
         self._config = self._load_config()
         self._recent_files: list = self._config.get("recent_files", [])
         
@@ -145,9 +147,10 @@ class PfaffCreativeEmulator(QMainWindow):
         file_menu.addMenu(self._recent_menu)
         self._rebuild_recent_menu()
         
-        save_action = QAction("Save", self)
-        save_action.triggered.connect(self.save_file)
-        file_menu.addAction(save_action)
+        self._save_action = QAction("Save", self)
+        self._save_action.setEnabled(False)
+        self._save_action.triggered.connect(self.save_file)
+        file_menu.addAction(self._save_action)
         
         save_as_action = QAction("Save As...", self)
         save_as_action.triggered.connect(self.save_file_as)
@@ -223,6 +226,24 @@ class PfaffCreativeEmulator(QMainWindow):
         settings_menu.addAction(preferences_action)
 
         self._apply_config_to_menu()
+
+    # ------------------------------------------------------------------
+    # Modified-state tracking
+    # ------------------------------------------------------------------
+
+    def _set_modified(self, modified: bool):
+        """Update the dirty flag, Save action, and window title."""
+        self._modified = modified
+        self._save_action.setEnabled(modified)
+        self._refresh_title()
+
+    def _refresh_title(self):
+        """Rebuild the window title from the current file name and dirty flag."""
+        suffix = " *" if self._modified else ""
+        if self._title_name:
+            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {self._title_name}{suffix}")
+        else:
+            self.setWindowTitle(f"PFAFF Creative 75xx Emulator{suffix}")
 
     # ------------------------------------------------------------------
     # Config persistence
@@ -315,7 +336,8 @@ class PfaffCreativeEmulator(QMainWindow):
             self.mmemory_tab.update_ui(self.machine_state)
             self.card_memory_tab.update_ui(self.machine_state)
             logger.info(f"File opened: {file_path}")
-            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+            self._title_name = Path(file_path).name
+            self._set_modified(False)
             self._add_to_recent(file_path)
         except Exception as e:
             logger.error(f"Failed to open file: {str(e)}")
@@ -334,7 +356,8 @@ class PfaffCreativeEmulator(QMainWindow):
         self.current_file = None
         self.pmemory_tab.update_ui(self.machine_state)
         logger.info("New file created")
-        self.setWindowTitle("PFAFF 75xx Sewing Machine Emulator - [New]")
+        self._title_name = "[New]"
+        self._set_modified(False)
     
     def open_file(self):
         """Open a machine state file"""
@@ -353,44 +376,51 @@ class PfaffCreativeEmulator(QMainWindow):
                 self.mmemory_tab.update_ui(self.machine_state)
                 self.card_memory_tab.update_ui(self.machine_state)
                 logger.info(f"File opened: {file_path}")
-                self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+                self._title_name = Path(file_path).name
+                self._set_modified(False)
                 self._add_to_recent(file_path)
             except Exception as e:
                 logger.error(f"Failed to open file: {str(e)}")
                 QMessageBox.critical(self, "Error", f"Failed to open file: {str(e)}")
-    
-    def save_file(self):
-        """Save current machine state"""
+
+    def save_file(self) -> bool:
+        """Save current machine state. Returns True on success."""
         if self.current_file:
             try:
                 self.machine_state.save_to_file(self.current_file)
                 logger.info(f"File saved: {self.current_file}")
-                self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(self.current_file).name}")
+                self._set_modified(False)
+                return True
             except Exception as e:
                 logger.error(f"Failed to save file: {str(e)}")
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
+                return False
         else:
-            self.save_file_as()
-    
-    def save_file_as(self):
-        """Save machine state to a new file"""
+            return self.save_file_as()
+
+    def save_file_as(self) -> bool:
+        """Save machine state to a new file. Returns True on success."""
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Sewing Machine State",
             "",
             "JSON files (*.json);;All files (*.*)"
         )
-        
+
         if file_path:
             try:
                 self.machine_state.save_to_file(file_path)
                 self.current_file = file_path
                 logger.info(f"File saved as: {file_path}")
-                self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+                self._title_name = Path(file_path).name
+                self._set_modified(False)
                 self._add_to_recent(file_path)
+                return True
             except Exception as e:
                 logger.error(f"Failed to save file: {str(e)}")
                 QMessageBox.critical(self, "Error", f"Failed to save file: {str(e)}")
+                return False
+        return False
     
     def open_serial_connection(self):
         """Open serial connection dialog"""
@@ -464,7 +494,8 @@ class PfaffCreativeEmulator(QMainWindow):
             self.mmemory_tab.update_ui(self.machine_state)
             self.card_memory_tab.update_ui(self.machine_state)
             logger.info(f"Auto-loaded machine state: {file_path}")
-            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {Path(file_path).name}")
+            self._title_name = Path(file_path).name
+            self._set_modified(False)
         except Exception as e:
             logger.warning(f"Auto-load machine state failed: {e}")
 
@@ -562,10 +593,12 @@ class PfaffCreativeEmulator(QMainWindow):
             slot.pattern_raw = ""
         self.pmemory_tab.update_ui(self.machine_state)
         logger.info("P-Memory: all slots cleared")
+        self._set_modified(True)
 
     def _on_pmemory_changed(self):
         """Refresh P-Memory tab after a delete or write operation"""
         self.pmemory_tab.update_ui(self.machine_state)
+        self._set_modified(True)
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""
@@ -582,6 +615,21 @@ class PfaffCreativeEmulator(QMainWindow):
     
     def closeEvent(self, event):
         """Handle application close event"""
+        if self._modified:
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "There are unsaved changes. Do you want to save them?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save
+            )
+            if reply == QMessageBox.Save:
+                if not self.save_file():
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
         if self.serial_handler.is_connected:
             self.serial_handler.disconnect()
         event.accept()
