@@ -368,8 +368,6 @@ class PFAFFProtocol:
 
         slot.slot_type = "Empty"
         slot.data = []
-        slot.header_raw = ""
-        slot.pattern_raw = ""
         logger.info(f"Delete P-Memory: slot {slot_id} cleared")
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
@@ -559,8 +557,6 @@ class PFAFFProtocol:
 
         slot.data = data
         slot.slot_type = "9mm"
-        slot.header_raw = self._write_header.decode('ascii', errors='replace')
-        slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
         pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
         logger.info(
             f"Write P-Memory: slot {self._write_slot_id} written ({len(data)} bytes), "
@@ -614,16 +610,16 @@ class PFAFFProtocol:
                     d0y_max = max_y - ys[0]
                     d0y_min = min_y - ys[0]
                     d0y_min_abs = abs(d0y_min)
-                    dx_max = max(abs(xs[i+1] - xs[i]) for i in range(len(xs) - 1)) if len(xs) >= 2 else 0
-                    dx_min = min(xs[i+1] - xs[i] for i in range(len(xs) - 1)) if len(xs) >= 2 else 0
+                    dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+                    dx_max = max(dxs)
+                    dx_min = min(dxs)
                     dx_min_abs = abs(dx_min)
-                    dx_abs = max(dx_max, dx_min_abs)
                     f.write(
                         f"STATISTICS: n={len(data)//2:02X}, n_bytes={len(data):02X}, checksum={self._calculate_checksum(data):02X}, "
                         f"x_min={min_x:02X} x_max={max_x:02X}, span_x={max_x - min_x:02X}, "
+                        f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, "
                         f"y_min={min_y:02X} y_max={max_y:02X}, span_y={max_y - min_y:02X}, "
                         f"d0y_max={d0y_max:02X}, d0y_min={d0y_min & 0xFF:02X}, d0y_min_abs={d0y_min_abs:02X}, "
-                        f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, dx_abs={dx_abs:02X}, "
                         f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
                     )
         except OSError as e:

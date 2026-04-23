@@ -22,6 +22,7 @@ from serial_connection import SerialConnectionDialog
 from serial_handler import SerialHandler
 from pfaff_protocol import PFAFFProtocol
 from preferences_dialog import PreferencesDialog
+from slot_detail_window import SlotDetailWindow
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -40,6 +41,7 @@ class PfaffCreativeEmulator(QMainWindow):
         self.current_file = None
         self._modified = False
         self._title_name = ""
+        self._slot_detail_windows: dict = {}
         self._config = self._load_config()
         self._recent_files: list = self._config.get("recent_files", [])
         
@@ -51,6 +53,7 @@ class PfaffCreativeEmulator(QMainWindow):
         
         # Setup UI
         self.setup_ui()
+        self.pmemory_tab.slot_clicked.connect(self._open_slot_detail)
         self.create_menu()
 
         logger.info("Application started")
@@ -224,6 +227,12 @@ class PfaffCreativeEmulator(QMainWindow):
         preferences_action = QAction("Preferences", self)
         preferences_action.triggered.connect(self._open_preferences)
         settings_menu.addAction(preferences_action)
+
+        # Help menu
+        help_menu = menubar.addMenu("Help")
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
 
         self._apply_config_to_menu()
 
@@ -474,6 +483,51 @@ class PfaffCreativeEmulator(QMainWindow):
             actions[level] = action
         return actions
 
+    def _open_slot_detail(self, slot):
+        """Open (or raise) a detail window for the given slot."""
+        slot_id = slot.slot_id
+        existing = self._slot_detail_windows.get(slot_id)
+        if existing is not None:
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        def on_clear():
+            self._set_modified(True)
+            self.pmemory_tab.update_ui(self.machine_state)
+
+        def on_navigate(old_id, new_id):
+            if new_id in self._slot_detail_windows:
+                self._slot_detail_windows[new_id].raise_()
+                self._slot_detail_windows[new_id].activateWindow()
+                return False
+            w = self._slot_detail_windows.pop(old_id, None)
+            if w:
+                self._slot_detail_windows[new_id] = w
+            return True
+
+        win = SlotDetailWindow(self.machine_state.p_memory_slots, slot_id,
+                               on_clear=on_clear, on_navigate=on_navigate, parent=self)
+        win.destroyed.connect(lambda: [
+            self._slot_detail_windows.pop(k, None)
+            for k, v in list(self._slot_detail_windows.items()) if v is win
+        ])
+        self._slot_detail_windows[slot_id] = win
+        win.show()
+
+    def _show_about(self):
+        """Show the About dialog."""
+        QMessageBox.about(
+            self,
+            "About PFAFF Creative 75xx Emulator",
+            "<h3>PFAFF Creative 75xx Emulator</h3>"
+            "<p>An emulator for the PFAFF Creative 7570 sewing machine, "
+            "enabling communication over a serial interface.</p>"
+            "<b>Project:</b> "
+            '<a href="https://github.com/arthendev/pcstitchdesigner">'
+            "github.com/arthendev/pcstitchdesigner</a><br>"
+        )
+
     def _open_preferences(self):
         """Open the Preferences dialog and save any changes."""
         dlg = PreferencesDialog(self._config, parent=self)
@@ -599,6 +653,8 @@ class PfaffCreativeEmulator(QMainWindow):
         """Refresh P-Memory tab after a delete or write operation"""
         self.pmemory_tab.update_ui(self.machine_state)
         self._set_modified(True)
+        for win in list(self._slot_detail_windows.values()):
+            win._load_slot()
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""

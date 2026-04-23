@@ -4,7 +4,7 @@ P-Memory tab widget
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, 
                              QLabel, QFrame, QScrollArea)
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPalette, QPixmap, QPainter, QBrush, QPen
 from machine_state import MachineState
 
@@ -12,10 +12,12 @@ from machine_state import MachineState
 class PatternPreview(QFrame):
     """Widget to display pattern preview as a horizontal rectangle"""
     
-    def __init__(self, slot_data, slot_type=""):
+    def __init__(self, slot_data, slot_type="", show_points=False):
         super().__init__()
         self.slot_data = slot_data
         self.slot_type = slot_type
+        self.show_points = show_points
+        self.selected_point = None
         self.setFixedHeight(45)
         self.setStyleSheet("border: 1px solid #ccc; background-color: white;")
         self.setMinimumWidth(100)
@@ -46,9 +48,15 @@ class PatternPreview(QFrame):
                 x_range = x_max - x_min or 1
                 y_range = y_max - y_min or 1
 
+                draw_w = width - 2 * padding
+                draw_h = height - 2 * padding
+                scale = min(draw_w / x_range, draw_h / y_range)
+                x_offset = padding + (draw_w - x_range * scale) / 2
+                y_offset = padding + (draw_h - y_range * scale) / 2
+
                 def to_screen(xi, yi):
-                    sx = padding + (xi - x_min) / x_range * (width - 2 * padding)
-                    sy = height - padding - (yi - y_min) / y_range * (height - 2 * padding)
+                    sx = x_offset + (xi - x_min) * scale
+                    sy = height - y_offset - (yi - y_min) * scale
                     return int(sx), int(sy)
 
                 painter.setPen(QPen(QColor(0, 0, 180), 1))
@@ -56,6 +64,37 @@ class PatternPreview(QFrame):
                     x1, y1 = to_screen(xs[i], ys[i])
                     x2, y2 = to_screen(xs[i + 1], ys[i + 1])
                     painter.drawLine(x1, y1, x2, y2)
+
+                # Draw intermediate points as small black dots
+                if self.show_points:
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(QColor(0, 0, 0)))
+                    for i in range(1, n - 1):
+                        cx, cy = to_screen(xs[i], ys[i])
+                        painter.drawEllipse(cx - 2, cy - 2, 4, 4)
+
+                # Highlight selected point: small filled black rectangle (drawn before colored dots)
+                if self.show_points and self.selected_point is not None:
+                    sel = self.selected_point
+                    if 0 <= sel < n:
+                        sx, sy = to_screen(xs[sel], ys[sel])
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(QBrush(QColor(0, 0, 0)))
+                        size = 6
+                        painter.drawRect(sx - size // 2, sy - size // 2, size, size)
+
+                # First point — green (drawn on top)
+                if self.show_points:
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QBrush(QColor(0, 180, 0)))
+                    cx, cy = to_screen(xs[0], ys[0])
+                    painter.drawEllipse(cx - 3, cy - 3, 6, 6)
+
+                # Last point — red (drawn on top)
+                if self.show_points:
+                    painter.setBrush(QBrush(QColor(200, 0, 0)))
+                    cx, cy = to_screen(xs[n - 1], ys[n - 1])
+                    painter.drawEllipse(cx - 3, cy - 3, 6, 6)
         else:
             # Fallback: simple byte intensity bars
             num_bytes = len(self.slot_data)
@@ -72,11 +111,19 @@ class PatternPreview(QFrame):
 class SlotWidget(QFrame):
     """Widget representing a single memory slot"""
     
-    def __init__(self, slot):
+    def __init__(self, slot, on_click=None):
         super().__init__()
         self.slot = slot
+        self._on_click = on_click
         self.setup_ui()
         self.setStyleSheet("border: 1px solid #ddd; padding: 5px;")
+        if on_click:
+            self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._on_click:
+            self._on_click(self.slot)
+        super().mousePressEvent(event)
     
     def setup_ui(self):
         """Setup slot display UI"""
@@ -116,6 +163,8 @@ class SlotWidget(QFrame):
 
 class PMemoryTab(QWidget):
     """P-Memory tab showing all 30 memory slots"""
+
+    slot_clicked = pyqtSignal(object)
     
     def __init__(self, machine_state: MachineState):
         super().__init__()
@@ -151,7 +200,7 @@ class PMemoryTab(QWidget):
         columns = 8
         for i in range(30):
             slot = self.machine_state.get_p_memory_slot(i)
-            slot_widget = SlotWidget(slot)
+            slot_widget = SlotWidget(slot, on_click=self.slot_clicked.emit)
             self.slot_widgets.append(slot_widget)
             row = i // columns
             col = i % columns
