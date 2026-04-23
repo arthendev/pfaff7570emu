@@ -557,6 +557,8 @@ class PFAFFProtocol:
 
         slot.data = data
         slot.slot_type = "9mm"
+        slot.header_raw = self._write_header.decode('ascii', errors='replace')
+        slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
         pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
         logger.info(
             f"Write P-Memory: slot {self._write_slot_id} written ({len(data)} bytes), "

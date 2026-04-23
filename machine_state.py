@@ -32,7 +32,7 @@ class MemorySlot:
             "dx_max": None, "dx_min": None,
             "dx_min_abs": None, "dx_abs_max": None,
             "dy_max": None, "dy_min": None,
-            "dy_min_abs": None, "dy_abs": None,
+            "dy_min_abs": None, "dy_abs_max": None,
             "is_reversed": False,
             "dx_0n": None, "dx_0n_abs": None,
             "d0x_max": None, "d0x_min": None, "d0x_min_abs": None,

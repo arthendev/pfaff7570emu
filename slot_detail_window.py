@@ -170,7 +170,7 @@ class SlotDetailWindow(QDialog):
         table_layout.setContentsMargins(0, 0, 0, 0)
         self._points_table = QTableWidget()
         self._points_table.setColumnCount(5)
-        self._points_table.setHorizontalHeaderLabels(["#", "Dec (x,y)", "Hex (x,y)", "Dec diff(n, n-1)", "Hex diff(n, n-1)"])
+        self._points_table.setHorizontalHeaderLabels(["#", "Hex (x,y)", "Dec (x,y)", "Hex diff(n, n-1)", "Dec diff(n, n-1)"])
         self._points_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._points_table.setSelectionMode(QTableWidget.SingleSelection)
         self._points_table.verticalHeader().setVisible(False)
@@ -487,10 +487,10 @@ class SlotDetailWindow(QDialog):
             diff_hex_it.setFont(mono)
 
             self._points_table.setItem(i, 0, idx_it)
-            self._points_table.setItem(i, 1, dec_it)
-            self._points_table.setItem(i, 2, hex_it)
-            self._points_table.setItem(i, 3, diff_dec_it)
-            self._points_table.setItem(i, 4, diff_hex_it)
+            self._points_table.setItem(i, 1, hex_it)
+            self._points_table.setItem(i, 2, dec_it)
+            self._points_table.setItem(i, 3, diff_hex_it)
+            self._points_table.setItem(i, 4, diff_dec_it)
 
         # Ensure table expands to fill available space and size columns
         self._points_table.setSizePolicy(self._points_table.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
