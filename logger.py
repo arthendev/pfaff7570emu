@@ -4,7 +4,7 @@ Logger utilities
 
 import logging
 from PyQt5.QtWidgets import QTextEdit
-from PyQt5.QtCore import QDateTime
+from PyQt5.QtCore import QDateTime, QObject, pyqtSignal
 from PyQt5.QtGui import QTextCursor, QColor
 
 # Custom log level for unknown/unexpected commands
@@ -21,13 +21,17 @@ logging.Logger.unknown_cmd = unknown_cmd
 
 
 
-class ConsoleHandler(logging.Handler):
+class ConsoleHandler(logging.Handler, QObject):
     """Custom logging handler that writes to a QTextEdit widget"""
-    
+
+    _log_signal = pyqtSignal(int, str)  # (levelno, formatted_msg)
+
     def __init__(self, text_widget: QTextEdit):
-        super().__init__()
+        logging.Handler.__init__(self)
+        QObject.__init__(self)
         self.text_widget = text_widget
         self.visible_levels = {logging.DEBUG, logging.INFO, logging.WARNING}
+        self._log_signal.connect(self._append_to_widget)
 
     def set_level_visible(self, level: int, visible: bool):
         """Show or hide messages of the given level in the console."""
@@ -43,16 +47,18 @@ class ConsoleHandler(logging.Handler):
                     and record.levelno not in self.visible_levels:
                 return
             msg = self.format(record)
-            # Add timestamp
             timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
             formatted_msg = f"[{timestamp}] {msg}\n"
-            
-            # Append to text widget
+            self._log_signal.emit(record.levelno, formatted_msg)
+        except Exception:
+            self.handleError(record)
+
+    def _append_to_widget(self, levelno: int, formatted_msg: str):
+        """Append a formatted log message to the text widget (always runs in GUI thread)."""
+        try:
             self.text_widget.moveCursor(QTextCursor.End)
-            
-            # Color based on level
-            if record.levelno == UNKNOWN_CMD:
-                self.text_widget.moveCursor(QTextCursor.End)
+
+            if levelno == UNKNOWN_CMD:
                 import html
                 safe_msg = html.escape(formatted_msg).replace('\n', '<br/>')
                 self.text_widget.insertHtml(
@@ -60,18 +66,18 @@ class ConsoleHandler(logging.Handler):
                 )
                 self.text_widget.setTextColor(QColor(0, 0, 0))
             else:
-                if record.levelno >= logging.ERROR:
+                if levelno >= logging.ERROR:
                     self.text_widget.setTextColor(QColor(255, 0, 0))
-                elif record.levelno >= logging.WARNING:
+                elif levelno >= logging.WARNING:
                     self.text_widget.setTextColor(QColor(255, 165, 0))
-                elif record.levelno == logging.DEBUG:
+                elif levelno == logging.DEBUG:
                     self.text_widget.setTextColor(QColor(128, 128, 128))
                 else:
                     self.text_widget.setTextColor(QColor(0, 0, 0))
 
                 self.text_widget.insertPlainText(formatted_msg)
                 self.text_widget.setTextColor(QColor(0, 0, 0))
-            
+
             # Keep only last 1000 lines
             doc = self.text_widget.document()
             if doc.blockCount() > 1000:
@@ -80,7 +86,7 @@ class ConsoleHandler(logging.Handler):
                 cursor.select(QTextCursor.BlockUnderCursor)
                 cursor.removeSelectedText()
         except Exception:
-            self.handleError(record)
+            pass
 
 
 class FilteringStreamHandler(logging.StreamHandler):

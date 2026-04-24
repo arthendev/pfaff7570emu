@@ -40,7 +40,7 @@ class PFAFFProtocol:
     CMD_LIST_PMEMORY = "PI"
     CMD_DELETE_PMEMORY_PREFIX = "PL"   # followed by 2 hex-ASCII chars = slot number
     CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 10 hex-ASCII chars: slot(2)+size(6)+checksum(2)
-    CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+0(1)
+    CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
 
     # Internal state machine states
     _STATE_IDLE = 0
@@ -226,14 +226,14 @@ class PFAFFProtocol:
         cmd.append(checksum)
         return bytes(cmd)
     
-    def create_write_pmemory_command(self, slot_id: int, data: bytes, slot_type: str = "9mm") -> bytes:
+    def create_write_pmemory_command(self, slot_id: int, data: bytes, pattern_type: str = "9mm") -> bytes:
         """
         Create command to write P-Memory slot
         
         Args:
             slot_id: Memory slot ID (0-31)
             data: Data to write
-            slot_type: Pattern type (9mm, MAXI, etc)
+            pattern_type: Pattern type (9mm, MAXI, etc)
         
         Returns:
             Command bytes
@@ -322,7 +322,7 @@ class PFAFFProtocol:
 
         # Per-slot: type(1) + size_be(2) + reserved_zeros(2) = 5 bytes → 10 ASCII chars
         for slot in slots:
-            type_byte = 0x01 if slot.slot_type == "MAXI" else 0x00
+            type_byte = 0x01 if slot.pattern_type == "MAXI" else 0x00
             size = slot.get_size_bytes()
             ascii_data.extend(f"{type_byte:02X}".encode('ascii'))
             ascii_data.extend(f"{size:04X}".encode('ascii'))
@@ -367,8 +367,8 @@ class PFAFFProtocol:
             logger.warning(f"Delete P-Memory: slot {slot_id} out of range")
             return bytes([self.CTRL_NAK])
 
-        slot.slot_type = "Empty"
-        slot.data = []
+        slot.pattern_type = "Empty"
+        slot.pattern_xy = []
         logger.info(f"Delete P-Memory: slot {slot_id} cleared")
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
@@ -435,16 +435,16 @@ class PFAFFProtocol:
             return bytes([self.CTRL_NAK])
 
         if stitch_type == 0x00:
-            slot_type_str = "9mm"
+            pattern_type_str = "9mm"
         elif stitch_type == 0x01:
-            slot_type_str = "MAXI"
+            pattern_type_str = "MAXI"
         else:
             logger.warning(f"Write P-Memory: unknown stitch type {stitch_type:#02X}")
             return bytes([self.CTRL_NAK])
 
         # Valid header - set up write state
         self._write_slot_id           = slot_id
-        self._write_stitch_type       = slot_type_str
+        self._write_stitch_type       = pattern_type_str
         self._write_expected_size     = expected_size
         self._write_data_accumulated  = bytearray()
         self._write_chunk_buffer      = bytearray()
@@ -452,7 +452,7 @@ class PFAFFProtocol:
         self._write_checksum_chars    = bytearray()
         self._state = self._STATE_WRITE_HEADER
 
-        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {slot_type_str} - requesting header")
+        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {pattern_type_str} - requesting header")
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
     def _process_write_header(self) -> bytes:
@@ -557,104 +557,40 @@ class PFAFFProtocol:
 
         slot = self.machine_state.get_p_memory_slot(self._write_slot_id)
 
-        if self._write_stitch_type == "9mm":
-            # Parse groups: 3-digit x, 2-digit y
-            data = []
-            for i in range(0, len(self._write_data_accumulated), 5):
-                group = self._write_data_accumulated[i:i+5]
-                if len(group) < 5:
-                    break
-                x = int(group[0:3])
-                y = int(group[3:5])
-                data.append(x)
-                data.append(y)
-
-            slot.data = data
-            slot.slot_type = "9mm"
-            slot.header_raw = self._write_header.decode('ascii', errors='replace')
-            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
-            pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
+        if self._write_stitch_type in ("9mm", "MAXI"):
+            slot.set_slot_data(
+                self._write_stitch_type,
+                self._write_header.decode('ascii', errors='replace'),
+                self._write_data_accumulated.decode('ascii', errors='replace')
+            )
             logger.info(
-                f"Write P-Memory: slot {self._write_slot_id} written with a 9mm stitch ({len(data)//2} points), "
+                f"Write P-Memory: slot {self._write_slot_id} written with a {self._write_stitch_type} stitch ({slot.get_size_bytes()} bytes)"
             )
-            logger.debug(
-                f"[{slot.slot_type} stitch: {pairs_str}]"
-            )
-            if len(data) >= 2:
-                xs = data[0::2]
-                ys = data[1::2]
-                min_x, max_x = min(xs), max(xs)
-                min_y, max_y = min(ys), max(ys)
-                logger.debug(
-                    f"Pattern stats: n={len(data)//2}, n_bytes={len(self._write_data_accumulated)}, "
-                    f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
-                    f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
-                    f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
-                )
-        elif self._write_stitch_type == "MAXI":
-            # Parse groups: 3-digit x, 2-digit y, +/- sign, 1-digit side transport
-            # The sign and transport digit together form a signed side transport value
-            # that is accumulated across all stitches. Effective x = raw_x + maxi_transport.
-            data = []
-            maxi_transport = 0
-            for i in range(0, len(self._write_data_accumulated), 7):
-                group = self._write_data_accumulated[i:i+7]
-                if len(group) < 5:
-                    break
-                x = int(group[0:3])
-                y = int(group[3:5])
-                maxi_transport += int(group[5:7])
-                data.append(x + maxi_transport)
-                data.append(y)
-
-            slot.data = data
-            slot.slot_type = "MAXI"
-            slot.header_raw = self._write_header.decode('ascii', errors='replace')
-            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
-            pairs_str = " ".join(f"({data[j]},{data[j+1]})" for j in range(0, len(data) - 1, 2))
-            logger.info(
-                f"Write P-Memory: slot {self._write_slot_id} written with a MAXI stitch ({len(data)//2} points)"
-            )
-            logger.debug(
-                f"[{slot.slot_type} stitch: {pairs_str}]"
-            )
-            if len(data) >= 2:
-                xs = data[0::2]
-                ys = data[1::2]
-                min_x, max_x = min(xs), max(xs)
-                min_y, max_y = min(ys), max(ys)
-                logger.debug(
-                    f"Pattern stats: n={len(data)//2}, n_bytes={len(self._write_data_accumulated)}, "
-                    f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
-                    f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
-                    f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
-                )
         else:
-            data = []
-            slot.data = data
-            slot.slot_type = "Unknown"
-            slot.header_raw = self._write_header.decode('ascii', errors='replace')
-            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
-            logger.warning(f"Write P-Memory: unknown stitch type {self._write_stitch_type} on commit - storing raw data only")
-            
+            slot.set_slot_data(
+                self._write_stitch_type,
+                self._write_header.decode('ascii', errors='replace'),
+                self._write_data_accumulated.decode('ascii', errors='replace')
+            )
+            logger.warning(f"Write P-Memory: unknown stitch type {self._write_stitch_type} on commit - storing raw data only ({slot.get_size_bytes()} bytes)")
 
-        self._append_write_log(data)
+        self._append_write_log(slot)
         self._abort_write()  # resets state to IDLE
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
         return bytes([])
 
-    def _append_write_log(self, data: list) -> None:
+    def _append_write_log(self, slot) -> None:
         """Append header bytes and pattern statistics (in hex) to pmem_write_head_log.txt."""
         log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pmem_write_head_log.txt")
         try:
             with open(log_path, 'a', encoding='ascii') as f:
                 import datetime
                 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                f.write(f"--- {ts}  slot={self._write_slot_id} ---\n")
+                f.write(f"--- {ts}  slot={slot.slot_id} ---\n")
 
                 # Header: ascii bytes are pairs of hex chars; convert each pair to int → print as hex
-                header_ascii = self._write_header.decode('ascii', errors='replace')
+                header_ascii = slot.header_raw
                 header_hex = ' '.join(
                     f"{int(header_ascii[i:i+2], 16):02X}"
                     if all(c in '0123456789ABCDEFabcdef' for c in header_ascii[i:i+2])
@@ -663,33 +599,22 @@ class PFAFFProtocol:
                 )
                 f.write(f"HEADER: {header_hex}\n")
 
-                if self._write_stitch_type == "9mm":
-                    # Pattern statistics in hex
-                    if len(data) >= 2:
-                        xs = data[0::2]
-                        ys = data[1::2]
-                        min_x, max_x = min(xs), max(xs)
-                        min_y, max_y = min(ys), max(ys)
-                        d0y_max = max_y - ys[0]
-                        d0y_min = min_y - ys[0]
-                        d0y_min_abs = abs(d0y_min)
-                        dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
-                        dx_max = max(dxs)
-                        dx_min = min(dxs)
-                        dx_min_abs = abs(dx_min)
+                if slot.pattern_type in ("9mm", "MAXI"):
+                    stats = slot.get_pattern_stats()
+                    if stats["n"] >= 1:
                         f.write(
-                            f"STATISTICS: n={len(data)//2:02X}, n_bytes={len(data):02X}, checksum={self._calculate_checksum(data):02X}, "
-                            f"x_min={min_x:02X} x_max={max_x:02X}, span_x={max_x - min_x:02X}, "
-                            f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, "
-                            f"y_min={min_y:02X} y_max={max_y:02X}, span_y={max_y - min_y:02X}, "
-                            f"d0y_max={d0y_max:02X}, d0y_min={d0y_min & 0xFF:02X}, d0y_min_abs={d0y_min_abs:02X}, "
-                            f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
+                            f"STATISTICS: n={stats['n']:02X}, n_bytes={slot.get_size_bytes():02X}, checksum={stats['checksum']:02X}, "
+                            f"x_min={stats['x_min']:02X} x_max={stats['x_max']:02X}, span_x={stats['span_x']:02X}, "
+                            f"dx_max={stats['dx_max']:02X}, dx_min={stats['dx_min'] & 0xFF:02X}, dx_min_abs={stats['dx_min_abs']:02X}, "
+                            f"y_min={stats['y_min']:02X} y_max={stats['y_max']:02X}, span_y={stats['span_y']:02X}, "
+                            f"d0y_max={stats['d0y_max']:02X}, d0y_min={stats['d0y_min'] & 0xFF:02X}, d0y_min_abs={stats['d0y_min_abs']:02X}, "
+                            f"p0_x={stats['p0_x']:02X}, p0_y={stats['p0_y']:02X}, pn_x={stats['pn_x']:02X}, pn_y={stats['pn_y']:02X}\n\n"
                         )
-                    elif self._write_stitch_type == "MAXI":
-                        f.write(
-                            f"MAXI stitch data stored as raw bytes (no parsing)\n\n"
-                        )
-                    
+                else:
+                    f.write(
+                        f"STATISTICS: unavailable for slot type {slot.pattern_type}\n\n"
+                    )
+
         except OSError as e:
             logger.warning(f"Write log: could not append to {log_path}: {e}")
 
@@ -703,7 +628,7 @@ class PFAFFProtocol:
     def handle_read_pmemory_init(self, params: str) -> bytes:
         """Handle 'RM<5 chars>' + CTRL_ETX (Read P-Memory) command.
 
-        params is 5 chars: fixed_06(2) + slot_hex(2) + fixed_0(1)
+        params is 5 chars: fixed_06(2) + slot_hex(2) + pattern_type(1)
         Responds with slot data in hex-ASCII chunks of up to READ_CHUNK_SIZE chars each.
         Each chunk is followed by CTRL_ETB + 2-char hex checksum.
         The last chunk additionally gets CTRL_ETX appended after the checksum.
@@ -711,14 +636,18 @@ class PFAFFProtocol:
         """
         fixed_byte = params[0:2]
         slot_hex   = params[2:4]
-        last_char  = params[4]
+        pattern_type  = params[4]
+
+        if pattern_type == "0":
+            requested_pattern_type = "9mm"
+        elif pattern_type == "1":
+            requested_pattern_type = "MAXI" 
+        else:
+            logger.warning(f"Read P-Memory: unknown requested pattern type {pattern_type!r}")
+            return bytes([self.CTRL_NAK])
 
         if fixed_byte.upper() != "06":
             logger.warning(f"Read P-Memory: unexpected fixed byte {fixed_byte!r} (expected '06')")
-            return bytes([self.CTRL_NAK])
-
-        if last_char != "0":
-            logger.warning(f"Read P-Memory: unexpected last char {last_char!r} (expected '0')")
             return bytes([self.CTRL_NAK])
 
         try:
@@ -737,20 +666,39 @@ class PFAFFProtocol:
             logger.warning(f"Read P-Memory: slot {slot_id} out of range")
             return bytes([self.CTRL_NAK])
 
-        if slot.slot_type == "Empty" or not slot.data:
+        if slot.pattern_type == "Empty" or not slot.pattern_xy:
             logger.warning(f"Read P-Memory: slot {slot_id} is empty")
             return bytes([self.CTRL_NAK])
+        
+        if requested_pattern_type != slot.pattern_type:
+            logger.warning(f"Read P-Memory: unexpected requested pattern type (is: {slot.pattern_type}, requested: {requested_pattern_type})")
+            return bytes([self.CTRL_NAK])
 
-        # Encode slot data as 3-digit x + 2-digit y, iterating flat list in steps of 2
-        self._read_data = bytearray()
-        data = slot.data
-        for i in range(0, len(data) - 1, 2):
-            self._read_data.extend(f"{data[i]:03d}{data[i+1]:02d}".encode('ascii'))
-        self._read_offset = 0
+        if slot.pattern_type == "9mm":
+            # Encode slot data as 3-digit x + 2-digit y, iterating flat list in steps of 2
+            self._read_data = bytearray()
+            pattern_xy = slot.pattern_xy
+            for i in range(0, len(pattern_xy) - 1, 2):
+                self._read_data.extend(f"{pattern_xy[i]:03d}{pattern_xy[i+1]:02d}".encode('ascii'))
+            self._read_offset = 0
+        elif slot.pattern_type == "MAXI":
+            # Encode slot data as 3-digit x + 2-digit y + side transport with sign
+            self._read_data = bytearray()
+            pattern_bytes = slot.pattern_bytes
+            for i in range(0, len(pattern_bytes) - 1, 3):
+                x = pattern_bytes[i]
+                y = pattern_bytes[i+1]
+                side = pattern_bytes[i+2]
+                self._read_data.extend(f"{x:03d}{y:02d}{side:+d}".encode('ascii'))
+        else:
+            logger.warning(f"Read P-Memory: unknown pattern type {slot.pattern_type} in slot {slot_id}")
+            return bytes([self.CTRL_NAK])
+
+
         self._read_last_chunk_sent = False
 
         logger.info(
-            f"Read P-Memory: slot {slot_id}, {len(slot.data)} bytes "
+            f"Read P-Memory: slot {slot_id}, {len(slot.pattern_xy)} bytes "
             f"({len(self._read_data)} ASCII chars) - sending first chunk"
         )
         return self._send_next_read_chunk()

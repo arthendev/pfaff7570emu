@@ -240,10 +240,6 @@ class SlotDetailWindow(QDialog):
         self._prev_btn.setEnabled(idx > 0)
         self._next_btn.setEnabled(idx < len(self._slots) - 1)
 
-    def _parse_pattern_stats(self):
-        """Return pattern statistics computed from the slot's pattern data."""
-        return self.slot.get_pattern_stats()
-
     def _get_header_bytes(self):
         """Extract header bytes from header_raw string."""
         bytes_list = []
@@ -264,19 +260,32 @@ class SlotDetailWindow(QDialog):
                 item.widget().deleteLater()
 
         header_bytes = self._get_header_bytes()
-        stats = self._parse_pattern_stats()
+        stats = self.slot.get_pattern_stats()
 
-        mapping = {
-            0: ("y_min", "min(ys)"),
-            1: ("y_max", "max(ys)"),
-            2: ("dx_abs_max", "max(abs(dxs))"),
-            5: (None, "Unknown"),
-            7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),
-            9: ("pn_x", "xs[end]"),
-            11: ("span_x", "max(xs) - min(xs)"),
-            13: ("y_min_to_bound", "0x36 - min(ys)"),
-            15: ("span_y", "max(ys) - min(ys)"),
-        }
+        if self.slot.pattern_type == "9mm":
+            mapping = {
+                0: ("y_min", "min(ys)"),
+                1: ("y_max", "max(ys)"),
+                2: ("dx_abs_max", "max(abs(dxs))"),
+                5: (None, "Unknown"),
+                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),
+                9: ("pn_x", "xs[end]"),
+                11: ("span_x", "max(xs) - min(xs)"),
+                13: ("y_min_to_bound", "0x36 - min(ys)"),
+                15: ("span_y", "max(ys) - min(ys)"),
+            }
+        else:
+            mapping = {
+                0: ("y_min_norm", "min(ys)"),
+                1: ("y_max_norm_div_2", "max(ys)//2"),
+                2: ("dx_abs_max", "max(abs(dxs))"),
+                5: (None, "Unknown"),
+                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),
+                9: ("pn_x", "xs[end]"),
+                11: ("span_x", "max(xs) - min(xs)"),
+                13: ("y_min_to_bound", "0x36 - min(ys)"),
+                15: ("span_y", "max(ys) - min(ys)"),
+            }
 
         row = 0
         for idx in range(max(16, len(header_bytes))):
@@ -367,6 +376,9 @@ class SlotDetailWindow(QDialog):
             ("x_max",               s["x_max"],         None),
             ("y_min",               s["y_min"],         None),
             ("y_max",               s["y_max"],         None),
+            ("y_min_norm",          s["y_min_norm"],    None),
+            ("y_max_norm",          s["y_max_norm"],    None),
+            ("y_max_norm_div_2",    s["y_max_norm_div_2"],   None),
             ("y_min_to_bound",      s["y_min_to_bound"], None),
             ("span_x",              s["span_x"],        None),
             ("span_y",              s["span_y"],        None),
@@ -441,7 +453,7 @@ class SlotDetailWindow(QDialog):
     def _populate_points_grid(self):
         """Fill the Pattern tab with point list: index, (x,y) Dec, (x,y) Hex."""
         # Populate the points table
-        data = list(self.slot.data)
+        data = list(self.slot.pattern_xy)
         xs = data[0::2]
         ys = data[1::2]
         n = min(len(xs), len(ys))
@@ -580,12 +592,11 @@ class SlotDetailWindow(QDialog):
     def _load_slot(self):
         """Populate all fields from the current slot data."""
         self._slot_label.setText(f"Slot:  P {self.slot.slot_id}")
-        self._type_label.setText(f"    Type:  {self.slot.slot_type}")
+        self._type_label.setText(f"    Type:  {self.slot.pattern_type}")
         self._bytes_label.setText(f"    Bytes:  {self.slot.get_size_bytes()}")
-        stitches = len(self.slot.data) // 2 if self.slot.slot_type != "Empty" else 0
-        self._stitches_label.setText(f"    Stitches:  {stitches}")
-        self._preview.slot_data = list(self.slot.data)
-        self._preview.slot_type = self.slot.slot_type
+        self._stitches_label.setText(f"    Stitches:  {self.slot.get_size_stitches()}")
+        self._preview.pattern_xy = list(self.slot.pattern_xy)
+        self._preview.pattern_type = self.slot.pattern_type
         self._preview.update()
         self._header_edit.setPlainText(self.slot.header_raw)
         self._header_edit_2.setPlainText(self.slot.header_raw)
@@ -593,7 +604,7 @@ class SlotDetailWindow(QDialog):
         self._populate_header_grid()
         self._populate_pattern_grid()
         self._populate_points_grid()
-        self._clear_btn.setEnabled(self.slot.slot_type != "Empty")
+        self._clear_btn.setEnabled(self.slot.pattern_type != "Empty")
         self._update_nav_buttons()
 
     def refresh(self):
@@ -602,10 +613,7 @@ class SlotDetailWindow(QDialog):
 
     def _clear_slot(self):
         """Clear the slot, refresh display, and notify the main window."""
-        self.slot.slot_type = "Empty"
-        self.slot.data = []
-        self.slot.header_raw = ""
-        self.slot.pattern_raw = ""
+        self.slot.clear()
         self.refresh()
         if self._on_clear_callback:
             self._on_clear_callback()

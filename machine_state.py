@@ -3,23 +3,118 @@ Machine state model and data persistence
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 from dataclasses import dataclass, asdict, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class MemorySlot:
     """Represents a single memory slot"""
     slot_id: int
-    slot_type: str = "Empty"  # Empty, 9mm, MAXI
-    data: List[int] = field(default_factory=list)
+    pattern_type: str = "Empty"  # Empty, 9mm, MAXI
     header_raw: str = ""  # raw header as ASCII string (hex-encoded pairs from machine)
-    pattern_raw: str = ""  # pattern as ASCII string (3-digit x + 2-digit y per point)
+    pattern_raw: str = ""  # pattern as ASCII string (as received from machine, e.g. groups of 5 or 7 chars per stitch)
+    pattern_bytes: List[int] = field(default_factory=list)
+    pattern_xy: List[int] = field(default_factory=list)
     
+    def clear(self):
+        """Clear the slot data, resetting to Empty"""
+        self.pattern_type = "Empty"
+        self.header_raw = ""
+        self.pattern_raw = ""
+        self.pattern_bytes = []
+        self.pattern_xy = []
+        
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
-        return len(self.pattern_raw)
+        return len(self.pattern_bytes)
+    
+    def get_size_stitches(self) -> int:
+        """Get number of stitches (points) in the pattern"""
+        return len(self.pattern_xy) // 2  # x,y pairs
+
+    def set_slot_data(self, pattern_type: str, header_raw: str, pattern_raw: str) -> None:
+        """Set slot data and parse the pattern"""
+        self.pattern_type = pattern_type
+        self.header_raw = header_raw
+        self.pattern_raw = pattern_raw
+        self.parse_pattern_data()
+
+        if self.pattern_type == "Empty" or len(self.pattern_xy) < 2:
+            return
+        
+        xs = self.pattern_xy[0::2]
+        ys = self.pattern_xy[1::2]
+        pairs_str = " ".join(f"({xs[i]},{ys[i]})" for i in range(len(xs)))
+        logger.debug(f"[{self.pattern_type} stitch: {pairs_str}]")
+        stats = self.get_pattern_stats()
+        logger.debug(
+            f"Pattern stats: n={stats['n']}, n_bytes={len(self.pattern_bytes)}, "
+            f"x_min={stats['x_min']} x_max={stats['x_max']}, span_x={stats['span_x']}, "
+            f"y_min={stats['y_min']} y_max={stats['y_max']}, span_y={stats['span_y']}, "
+            f"p0_x={stats['p0_x']}, p0_y={stats['p0_y']}, pn_x={stats['pn_x']}, pn_y={stats['pn_y']}"
+        )
+
+    def parse_pattern_data(self) -> None:
+        """Parse self.pattern_raw into self.pattern_bytes and self.pattern_xy based on self.pattern_type.
+
+        9mm:  groups of 5 chars — 3-digit x + 2-digit y
+        MAXI: groups of 7 chars — 3-digit x + 2-digit y + sign char + 1-digit side transport;
+              side transport is accumulated (maxi_transport); effective x = raw_x + maxi_transport
+        """
+        if self.pattern_type == "9mm":
+            pattern_bytes = []
+            pattern_xy = []
+            raw = self.pattern_raw
+            for i in range(0, len(raw), 5):
+                group = raw[i:i+5]
+                if len(group) < 5:
+                    break
+                try:
+                    x = int(group[0:3])
+                    y = int(group[3:5])
+                except ValueError:
+                    break
+                pattern_bytes.append(x)
+                pattern_bytes.append(y)
+                pattern_xy.append(x)
+                pattern_xy.append(y)
+            self.pattern_bytes = pattern_bytes
+            self.pattern_xy = pattern_xy
+
+        elif self.pattern_type == "MAXI":
+            pattern_bytes = []
+            pattern_xy = []
+            side_transport_acc = 0
+            raw = self.pattern_raw
+            for i in range(0, len(raw), 7):
+                group = raw[i:i+7]
+                if len(group) < 7:
+                    break
+                try:
+                    x = int(group[0:3])
+                    y = int(group[3:5])
+                    side_transport = int(group[5:7])
+                    side_transport_acc += side_transport
+                except (ValueError, IndexError):
+                    break
+                pattern_bytes.append(x)
+                pattern_bytes.append(y)
+                pattern_bytes.append(side_transport)
+                pattern_xy.append(x)
+                pattern_xy.append(y + side_transport_acc)
+            self.pattern_bytes = pattern_bytes
+            self.pattern_xy = pattern_xy
+
+        else:
+            pattern_bytes = []
+            pattern_xy = []
+            self.pattern_bytes = pattern_bytes
+            self.pattern_xy = pattern_xy
 
     def get_pattern_stats(self) -> dict:
         """Compute statistics from the pattern data (x,y interleaved)."""
@@ -27,6 +122,8 @@ class MemorySlot:
             "n": 0,
             "x_min": None, "x_max": None,
             "y_min": None, "y_max": None,
+            "y_min_norm": None, "y_max_norm": None,
+            "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
             "span_x": None, "span_y": None,
             "dx_max": None, "dx_min": None,
@@ -48,10 +145,10 @@ class MemorySlot:
             "dny_max": None, "dny_min": None, "dny_min_abs": None,
             "checksum": None,
         }
-        if self.slot_type == "Empty" or len(self.data) < 2:
+        if self.pattern_type == "Empty" or len(self.pattern_xy) < 2:
             return stats
-        xs = self.data[0::2]
-        ys = self.data[1::2]
+        xs = self.pattern_xy[0::2]
+        ys = self.pattern_xy[1::2]
         xs_reversed = list(reversed(xs));
         ys_reversed = list(reversed(ys));
         if not xs or not ys:
@@ -61,7 +158,14 @@ class MemorySlot:
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
         stats["y_max"] = max(ys)
-        stats["y_min_to_bound"] = 0x36 - stats["y_min"] if stats["y_min"] is not None else None
+        if(stats["y_min"] < 0):
+            stats["y_min_norm"] = 0
+            stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
+        else:
+            stats["y_min_norm"] = stats["y_min"]
+            stats["y_max_norm"] = stats["y_max"]
+        stats["y_max_norm_div_2"] = stats["y_max_norm"] // 2
+        stats["y_min_to_bound"] = 0x36 - stats["y_min"]
         stats["span_x"] = stats["x_max"] - stats["x_min"]
         stats["span_y"] = stats["y_max"] - stats["y_min"]
         if len(xs) >= 2:
@@ -107,17 +211,18 @@ class MemorySlot:
         stats["dny_max"] = stats["y_max"] - ys[-1]
         stats["dny_min"] = stats["y_min"] - ys[-1]
         stats["dny_min_abs"] = abs(stats["dny_min"])
-        stats["checksum"] = sum(self.data) % 256
+        stats["checksum"] = sum(self.pattern_xy) % 256
         return stats
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
             "slot_id": self.slot_id,
-            "slot_type": self.slot_type,
-            "data": self.data,
+            "pattern_type": self.pattern_type,
             "header_raw": self.header_raw,
-            "pattern_raw": self.pattern_raw
+            "pattern_raw": self.pattern_raw,
+            "pattern_bytes": self.pattern_bytes,
+            "pattern_xy": self.pattern_xy
         }
     
     @staticmethod
@@ -125,10 +230,11 @@ class MemorySlot:
         """Create MemorySlot from dictionary"""
         return MemorySlot(
             slot_id=data.get("slot_id", 0),
-            slot_type=data.get("slot_type", "Empty"),
-            data=data.get("data", []),
+            pattern_type=data.get("pattern_type", "Empty"),
             header_raw=data.get("header_raw", ""),
-            pattern_raw=data.get("pattern_raw", "")
+            pattern_raw=data.get("pattern_raw", ""),
+            pattern_bytes=data.get("pattern_bytes", []),
+            pattern_xy=data.get("pattern_xy", [])
         )
 
 
@@ -143,7 +249,7 @@ class MachineState:
         
         # Initialize P-Memory with 30 empty slots
         for i in range(30):
-            self.p_memory_slots.append(MemorySlot(slot_id=i, slot_type="Empty"))
+            self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
     
     
     def get_p_memory_slot(self, slot_id: int) -> MemorySlot:

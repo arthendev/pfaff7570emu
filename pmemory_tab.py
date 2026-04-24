@@ -12,10 +12,10 @@ from machine_state import MachineState
 class PatternPreview(QFrame):
     """Widget to display pattern preview as a horizontal rectangle"""
     
-    def __init__(self, slot_data, slot_type="", show_points=False):
+    def __init__(self, pattern_xy, pattern_type="", show_points=False):
         super().__init__()
-        self.slot_data = slot_data
-        self.slot_type = slot_type
+        self.pattern_xy = pattern_xy
+        self.pattern_type = pattern_type
         self.show_points = show_points
         self.selected_point = None
         self.setFixedHeight(45)
@@ -26,7 +26,7 @@ class PatternPreview(QFrame):
         """Paint the pattern preview"""
         super().paintEvent(event)
         
-        if not self.slot_data or len(self.slot_data) == 0:
+        if not self.pattern_xy or len(self.pattern_xy) == 0:
             return
         
         painter = QPainter(self)
@@ -37,10 +37,10 @@ class PatternPreview(QFrame):
         height = rect.height()
         padding = 4
 
-        if self.slot_type in ("9mm", "MAXI") and len(self.slot_data) >= 2:
+        if self.pattern_type in ("9mm", "MAXI") and len(self.pattern_xy) >= 2:
             # Interpret flat list as interleaved x, y coordinates
-            xs = self.slot_data[0::2]
-            ys = self.slot_data[1::2]
+            xs = self.pattern_xy[0::2]
+            ys = self.pattern_xy[1::2]
             n = min(len(xs), len(ys))
             if n >= 2:
                 x_min, x_max = min(xs), max(xs)
@@ -97,9 +97,9 @@ class PatternPreview(QFrame):
                     painter.drawEllipse(cx - 3, cy - 3, 6, 6)
         else:
             # Fallback: simple byte intensity bars
-            num_bytes = len(self.slot_data)
+            num_bytes = len(self.pattern_xy)
             byte_width = max(1, width // max(num_bytes, 1))
-            for i, byte_val in enumerate(self.slot_data[:width // byte_width]):
+            for i, byte_val in enumerate(self.pattern_xy[:width // byte_width]):
                 x = i * byte_width
                 gray_val = byte_val % 256
                 color = QColor(gray_val, gray_val, gray_val)
@@ -146,14 +146,14 @@ class SlotWidget(QFrame):
         right_layout.setSpacing(3)
         
         # Slot type and size
-        info_label = QLabel(f"{self.slot.slot_type}   {self.slot.get_size_bytes()} bytes")
+        info_label = QLabel(f"{self.slot.pattern_type}   {self.slot.get_size_bytes()} bytes")
         info_font = QFont()
         info_font.setPointSize(8)
         info_label.setFont(info_font)
         right_layout.addWidget(info_label)
         
         # Pattern preview
-        preview = PatternPreview(self.slot.data, self.slot.slot_type)
+        preview = PatternPreview(self.slot.pattern_xy, self.slot.pattern_type)
         right_layout.addWidget(preview)
         
         main_layout.addLayout(right_layout)

@@ -641,10 +641,7 @@ class PfaffCreativeEmulator(QMainWindow):
     def _clear_all_pmemory(self):
         """Clear all P-Memory slots, resetting them to Empty."""
         for slot in self.machine_state.p_memory_slots:
-            slot.slot_type = "Empty"
-            slot.data = []
-            slot.header_raw = ""
-            slot.pattern_raw = ""
+            slot.clear()
         self.pmemory_tab.update_ui(self.machine_state)
         logger.info("P-Memory: all slots cleared")
         self._set_modified(True)
