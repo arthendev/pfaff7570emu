@@ -524,8 +524,8 @@ class PfaffCreativeEmulator(QMainWindow):
             "<p>An emulator for the PFAFF Creative 7570 sewing machine, "
             "enabling communication over a serial interface.</p>"
             "<b>Project:</b> "
-            '<a href="https://github.com/arthendev/pcstitchdesigner">'
-            "github.com/arthendev/pcstitchdesigner</a><br>"
+            '<a href="https://github.com/arthendev/pfaff7570emu">'
+            "github.com/arthendev/pfaff7570emu</a><br>"
         )
 
     def _open_preferences(self):

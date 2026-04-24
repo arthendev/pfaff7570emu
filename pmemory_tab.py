@@ -37,7 +37,7 @@ class PatternPreview(QFrame):
         height = rect.height()
         padding = 4
 
-        if self.slot_type == "9mm" and len(self.slot_data) >= 2:
+        if self.slot_type in ("9mm", "MAXI") and len(self.slot_data) >= 2:
             # Interpret flat list as interleaved x, y coordinates
             xs = self.slot_data[0::2]
             ys = self.slot_data[1::2]

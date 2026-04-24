@@ -19,7 +19,7 @@ class MemorySlot:
     
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
-        return len(self.data)
+        return len(self.pattern_raw)
 
     def get_pattern_stats(self) -> dict:
         """Compute statistics from the pattern data (x,y interleaved)."""

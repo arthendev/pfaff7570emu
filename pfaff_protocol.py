@@ -65,8 +65,9 @@ class PFAFFProtocol:
 
         # Write P-Memory state machine
         self._state = self._STATE_IDLE
-        self._write_slot_id = 0
-        self._write_expected_size = 0
+        self._write_slot_id = None
+        self._write_stitch_type = None
+        self._write_expected_size = None
         self._write_data_accumulated = bytearray()
         self._write_chunk_buffer = bytearray()
         self._write_checksum_chars = bytearray()
@@ -376,8 +377,9 @@ class PFAFFProtocol:
     def _abort_write(self):
         """Abort an in-progress P-Memory write and return to idle state."""
         self._state = self._STATE_IDLE
-        self._write_slot_id = 0
-        self._write_expected_size = 0
+        self._write_slot_id = None
+        self._write_stitch_type = None
+        self._write_expected_size = None
         self._write_data_accumulated = bytearray()
         self._write_chunk_buffer = bytearray()
         self._write_checksum_chars = bytearray()
@@ -387,18 +389,20 @@ class PFAFFProtocol:
     def handle_write_pmemory_init(self, params: str) -> bytes:
         """Handle 'PN<11 hex chars>' + CTRL_ETX (Write P-Memory header) command.
 
-        params is 11 chars: slot(2) + size(6) + CTRL_ETB + checksum(2)
+        params is 11 chars: slot(2) + stitch_type(2) + size(4) + CTRL_ETB + checksum(2)
         Checksum is verified over 'PN' + slot + size (10 ASCII bytes).
         On success: transitions to STATE_WRITE_DATA and returns CTRL_ACK.
         On error: returns CTRL_NAK.
         """
         slot_hex     = params[0:2]
-        size_hex     = params[2:8]
+        type_hex     = params[2:4]
+        size_hex     = params[4:8]
         ctrl         = params[8]  # should be CTRL_ETB
         checksum_hex = params[9:11]
 
         try:
             slot_id           = int(slot_hex, 16)
+            stitch_type       = int(type_hex, 16)
             expected_size     = int(size_hex, 16)
             ctrl_byte         = ord(ctrl)
             received_checksum = int(checksum_hex, 16)
@@ -410,8 +414,8 @@ class PFAFFProtocol:
             logger.warning(f"Write P-Memory: expected CTRL_ETB at position 8, got {ctrl!r}")
             return bytes([self.CTRL_NAK])
 
-        # Verify checksum over the full command prefix (PN + slot + size)
-        cmd_bytes  = ("PN" + slot_hex + size_hex).encode('ascii')
+        # Verify checksum over the full command prefix (PN + slot + type + size)
+        cmd_bytes  = ("PN" + slot_hex + type_hex + size_hex).encode('ascii')
         calculated = self._calculate_checksum(cmd_bytes)
         if calculated != received_checksum:
             logger.warning(
@@ -430,8 +434,17 @@ class PFAFFProtocol:
             logger.warning(f"Write P-Memory: slot {slot_id} out of range")
             return bytes([self.CTRL_NAK])
 
+        if stitch_type == 0x00:
+            slot_type_str = "9mm"
+        elif stitch_type == 0x01:
+            slot_type_str = "MAXI"
+        else:
+            logger.warning(f"Write P-Memory: unknown stitch type {stitch_type:#02X}")
+            return bytes([self.CTRL_NAK])
+
         # Valid header - set up write state
         self._write_slot_id           = slot_id
+        self._write_stitch_type       = slot_type_str
         self._write_expected_size     = expected_size
         self._write_data_accumulated  = bytearray()
         self._write_chunk_buffer      = bytearray()
@@ -439,7 +452,7 @@ class PFAFFProtocol:
         self._write_checksum_chars    = bytearray()
         self._state = self._STATE_WRITE_HEADER
 
-        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern - requesting header")
+        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {slot_type_str} - requesting header")
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
     def _process_write_header(self) -> bytes:
@@ -544,39 +557,86 @@ class PFAFFProtocol:
 
         slot = self.machine_state.get_p_memory_slot(self._write_slot_id)
 
-        # Parse groups: 3-digit x, 2-digit y
-        data = []
-        for i in range(0, len(self._write_data_accumulated), 5):
-            group = self._write_data_accumulated[i:i+5]
-            if len(group) < 5:
-                break
-            x = int(group[0:3])
-            y = int(group[3:5])
-            data.append(x)
-            data.append(y)
+        if self._write_stitch_type == "9mm":
+            # Parse groups: 3-digit x, 2-digit y
+            data = []
+            for i in range(0, len(self._write_data_accumulated), 5):
+                group = self._write_data_accumulated[i:i+5]
+                if len(group) < 5:
+                    break
+                x = int(group[0:3])
+                y = int(group[3:5])
+                data.append(x)
+                data.append(y)
 
-        slot.data = data
-        slot.slot_type = "9mm"
-        slot.header_raw = self._write_header.decode('ascii', errors='replace')
-        slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
-        pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
-        logger.info(
-            f"Write P-Memory: slot {self._write_slot_id} written ({len(data)} bytes), "
-        )
-        logger.debug(
-            f"[{slot.slot_type} stitch: {pairs_str}]"
-        )
-        if len(data) >= 2:
-            xs = data[0::2]
-            ys = data[1::2]
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
-            logger.debug(
-                f"Pattern stats: n={len(data)//2}, n_bytes={len(data)}, "
-                f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
-                f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
-                f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
+            slot.data = data
+            slot.slot_type = "9mm"
+            slot.header_raw = self._write_header.decode('ascii', errors='replace')
+            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
+            pairs_str = " ".join(f"({data[i]},{data[i+1]})" for i in range(0, len(data) - 1, 2))
+            logger.info(
+                f"Write P-Memory: slot {self._write_slot_id} written with a 9mm stitch ({len(data)//2} points), "
             )
+            logger.debug(
+                f"[{slot.slot_type} stitch: {pairs_str}]"
+            )
+            if len(data) >= 2:
+                xs = data[0::2]
+                ys = data[1::2]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+                logger.debug(
+                    f"Pattern stats: n={len(data)//2}, n_bytes={len(self._write_data_accumulated)}, "
+                    f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
+                    f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
+                    f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
+                )
+        elif self._write_stitch_type == "MAXI":
+            # Parse groups: 3-digit x, 2-digit y, +/- sign, 1-digit side transport
+            # The sign and transport digit together form a signed side transport value
+            # that is accumulated across all stitches. Effective x = raw_x + maxi_transport.
+            data = []
+            maxi_transport = 0
+            for i in range(0, len(self._write_data_accumulated), 7):
+                group = self._write_data_accumulated[i:i+7]
+                if len(group) < 5:
+                    break
+                x = int(group[0:3])
+                y = int(group[3:5])
+                maxi_transport += int(group[5:7])
+                data.append(x + maxi_transport)
+                data.append(y)
+
+            slot.data = data
+            slot.slot_type = "MAXI"
+            slot.header_raw = self._write_header.decode('ascii', errors='replace')
+            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
+            pairs_str = " ".join(f"({data[j]},{data[j+1]})" for j in range(0, len(data) - 1, 2))
+            logger.info(
+                f"Write P-Memory: slot {self._write_slot_id} written with a MAXI stitch ({len(data)//2} points)"
+            )
+            logger.debug(
+                f"[{slot.slot_type} stitch: {pairs_str}]"
+            )
+            if len(data) >= 2:
+                xs = data[0::2]
+                ys = data[1::2]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+                logger.debug(
+                    f"Pattern stats: n={len(data)//2}, n_bytes={len(self._write_data_accumulated)}, "
+                    f"x_min={min_x} x_max={max_x}, span_x={max_x - min_x}, "
+                    f"y_min={min_y} y_max={max_y}, span_y={max_y - min_y}, "
+                    f"p0_x={xs[0]}, p0_y={ys[0]}, pn_x={xs[-1]}, pn_y={ys[-1]}"
+                )
+        else:
+            data = []
+            slot.data = data
+            slot.slot_type = "Unknown"
+            slot.header_raw = self._write_header.decode('ascii', errors='replace')
+            slot.pattern_raw = self._write_data_accumulated.decode('ascii', errors='replace')
+            logger.warning(f"Write P-Memory: unknown stitch type {self._write_stitch_type} on commit - storing raw data only")
+            
 
         self._append_write_log(data)
         self._abort_write()  # resets state to IDLE
@@ -603,27 +663,33 @@ class PFAFFProtocol:
                 )
                 f.write(f"HEADER: {header_hex}\n")
 
-                # Pattern statistics in hex
-                if len(data) >= 2:
-                    xs = data[0::2]
-                    ys = data[1::2]
-                    min_x, max_x = min(xs), max(xs)
-                    min_y, max_y = min(ys), max(ys)
-                    d0y_max = max_y - ys[0]
-                    d0y_min = min_y - ys[0]
-                    d0y_min_abs = abs(d0y_min)
-                    dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
-                    dx_max = max(dxs)
-                    dx_min = min(dxs)
-                    dx_min_abs = abs(dx_min)
-                    f.write(
-                        f"STATISTICS: n={len(data)//2:02X}, n_bytes={len(data):02X}, checksum={self._calculate_checksum(data):02X}, "
-                        f"x_min={min_x:02X} x_max={max_x:02X}, span_x={max_x - min_x:02X}, "
-                        f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, "
-                        f"y_min={min_y:02X} y_max={max_y:02X}, span_y={max_y - min_y:02X}, "
-                        f"d0y_max={d0y_max:02X}, d0y_min={d0y_min & 0xFF:02X}, d0y_min_abs={d0y_min_abs:02X}, "
-                        f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
-                    )
+                if self._write_stitch_type == "9mm":
+                    # Pattern statistics in hex
+                    if len(data) >= 2:
+                        xs = data[0::2]
+                        ys = data[1::2]
+                        min_x, max_x = min(xs), max(xs)
+                        min_y, max_y = min(ys), max(ys)
+                        d0y_max = max_y - ys[0]
+                        d0y_min = min_y - ys[0]
+                        d0y_min_abs = abs(d0y_min)
+                        dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
+                        dx_max = max(dxs)
+                        dx_min = min(dxs)
+                        dx_min_abs = abs(dx_min)
+                        f.write(
+                            f"STATISTICS: n={len(data)//2:02X}, n_bytes={len(data):02X}, checksum={self._calculate_checksum(data):02X}, "
+                            f"x_min={min_x:02X} x_max={max_x:02X}, span_x={max_x - min_x:02X}, "
+                            f"dx_max={dx_max:02X}, dx_min={dx_min & 0xFF:02X}, dx_min_abs={dx_min_abs:02X}, "
+                            f"y_min={min_y:02X} y_max={max_y:02X}, span_y={max_y - min_y:02X}, "
+                            f"d0y_max={d0y_max:02X}, d0y_min={d0y_min & 0xFF:02X}, d0y_min_abs={d0y_min_abs:02X}, "
+                            f"p0_x={xs[0]:02X}, p0_y={ys[0]:02X}, pn_x={xs[-1]:02X}, pn_y={ys[-1]:02X}\n\n"
+                        )
+                    elif self._write_stitch_type == "MAXI":
+                        f.write(
+                            f"MAXI stitch data stored as raw bytes (no parsing)\n\n"
+                        )
+                    
         except OSError as e:
             logger.warning(f"Write log: could not append to {log_path}: {e}")
 
