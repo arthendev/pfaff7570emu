@@ -294,14 +294,23 @@ class MachineState:
     
     def from_dict(self, data: Dict[str, Any]):
         """Load machine state from dictionary"""
+        # Reset all slots to Empty first so stale data from a previous state
+        # never bleeds into the newly loaded state.
+        for slot in self.p_memory_slots:
+            slot.clear()
+
         if "p_memory_slots" in data:
-            self.p_memory_slots = [
-                MemorySlot.from_dict(slot) for slot in data["p_memory_slots"]
-            ]
-        
+            for slot_data in data["p_memory_slots"]:
+                loaded = MemorySlot.from_dict(slot_data)
+                idx = loaded.slot_id
+                if 0 <= idx < len(self.p_memory_slots):
+                    self.p_memory_slots[idx] = loaded
+                else:
+                    self.p_memory_slots.append(loaded)
+
         if "m_memory" in data:
             self.m_memory = data["m_memory"]
-        
+
         if "card_memory" in data:
             self.card_memory = data["card_memory"]
     

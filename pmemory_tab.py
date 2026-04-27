@@ -18,6 +18,7 @@ class PatternPreview(QFrame):
         self.pattern_type = pattern_type
         self.show_points = show_points
         self.selected_point = None
+        self.show_canvas = False
         self.setFixedHeight(45)
         self.setStyleSheet("border: 1px solid #ccc; background-color: white;")
         self.setMinimumWidth(100)
@@ -43,8 +44,16 @@ class PatternPreview(QFrame):
             ys = self.pattern_xy[1::2]
             n = min(len(xs), len(ys))
             if n >= 2:
-                x_min, x_max = min(xs), max(xs)
-                y_min, y_max = min(ys), max(ys)
+                if self.show_canvas and self.pattern_type in ("9mm", "MAXI"):
+                    if self.pattern_type == "9mm":
+                        x_min, x_max = 0, 198
+                        y_min, y_max = 0, 54
+                    else:
+                        x_min, x_max = 0, 998
+                        y_min, y_max = 0, 359
+                else:
+                    x_min, x_max = min(xs), max(xs)
+                    y_min, y_max = min(ys), max(ys)
                 x_range = x_max - x_min or 1
                 y_range = y_max - y_min or 1
 
@@ -58,6 +67,17 @@ class PatternPreview(QFrame):
                     sx = x_offset + (xi - x_min) * scale
                     sy = height - y_offset - (yi - y_min) * scale
                     return int(sx), int(sy)
+
+                # Draw canvas boundary rectangle
+                if self.show_canvas:
+                    cx1, cy1 = to_screen(x_min, y_min)
+                    cx2, cy2 = to_screen(x_max, y_max)
+                    painter.setPen(QPen(QColor(180, 180, 180), 1, Qt.DashLine))
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRect(
+                        min(cx1, cx2), min(cy1, cy2),
+                        abs(cx2 - cx1), abs(cy2 - cy1)
+                    )
 
                 painter.setPen(QPen(QColor(0, 0, 180), 1))
                 for i in range(n - 1):

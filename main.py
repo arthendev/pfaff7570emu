@@ -361,9 +361,14 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def new_file(self):
         """Create a new machine state file"""
-        self.machine_state = MachineState()
+        for slot in self.machine_state.p_memory_slots:
+            slot.clear()
+        self.machine_state.m_memory = []
+        self.machine_state.card_memory = []
         self.current_file = None
         self.pmemory_tab.update_ui(self.machine_state)
+        self.mmemory_tab.update_ui(self.machine_state)
+        self.card_memory_tab.update_ui(self.machine_state)
         logger.info("New file created")
         self._title_name = "[New]"
         self._set_modified(False)

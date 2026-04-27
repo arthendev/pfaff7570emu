@@ -99,6 +99,12 @@ class SlotDetailWindow(QDialog):
         self._logical_split_cb = QCheckBox("Logical split")
         self._logical_split_cb.stateChanged.connect(self._refresh_raw_display)
         split_row.addWidget(self._logical_split_cb)
+        self._show_canvas_cb = QCheckBox("Show canvas")
+        self._show_canvas_cb.stateChanged.connect(self._on_show_canvas_changed)
+        split_row.addWidget(self._show_canvas_cb)
+        self._hide_points_cb = QCheckBox("Hide points")
+        self._hide_points_cb.stateChanged.connect(self._on_hide_points_changed)
+        split_row.addWidget(self._hide_points_cb)
         split_row.addStretch()
         layout.addLayout(split_row)
 
@@ -667,6 +673,16 @@ class SlotDetailWindow(QDialog):
                 lines.append(line)
                 i += group
         return '\n'.join(lines)
+
+    def _on_show_canvas_changed(self):
+        """Toggle the canvas boundary rectangle in the pattern preview."""
+        self._preview.show_canvas = self._show_canvas_cb.isChecked()
+        self._preview.update()
+
+    def _on_hide_points_changed(self):
+        """Toggle point markers in the pattern preview."""
+        self._preview.show_points = not self._hide_points_cb.isChecked()
+        self._preview.update()
 
     def _refresh_raw_display(self):
         """Update header and pattern raw text edits (respects logical split)."""
