@@ -153,6 +153,7 @@ class MemorySlot:
             "dy_min_abs": None, "dy_abs_max": None,
             "is_reversed": False,
             "dx_0n": None, "dx_0n_abs": None,
+            "dy_0n": None, "dy_0n_abs": None,
             "d0x_max": None, "d0x_min": None, "d0x_min_abs": None,
             "d0y_max": None, "d0y_min": None, "d0y_min_abs": None,
             "p0_x": None, "p0_y": None,
@@ -179,12 +180,8 @@ class MemorySlot:
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
         stats["y_max"] = max(ys)
-        if(stats["y_min"] < 0):
-            stats["y_min_norm"] = 0
-            stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
-        else:
-            stats["y_min_norm"] = stats["y_min"]
-            stats["y_max_norm"] = stats["y_max"]
+        stats["y_min_norm"] = 0
+        stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
         stats["y_max_norm_div_2"] = stats["y_max_norm"] // 2
         stats["y_min_to_bound"] = 0x36 - stats["y_min"]
         stats["span_x"] = stats["x_max"] - stats["x_min"]
@@ -203,12 +200,14 @@ class MemorySlot:
             stats["is_reversed"] = xs[-1] < xs[0]
             stats["dx_0n"] = xs[-1] - xs[0]
             stats["dx_0n_abs"] = abs(stats["dx_0n"])
+            stats["dy_0n"] = ys[-1] - ys[0]
+            stats["dy_0n_abs"] = abs(stats["dy_0n"])
             stats["d0x_max"] = stats["x_max"] - xs[0]
             stats["d0x_min"] = stats["x_min"] - xs[0]
             stats["d0x_min_abs"] = abs(stats["d0x_min"])
-        stats["d0y_max"] = stats["y_max"] - ys[0]
-        stats["d0y_min"] = stats["y_min"] - ys[0]
-        stats["d0y_min_abs"] = abs(stats["d0y_min"])
+            stats["d0y_max"] = stats["y_max"] - ys[0]
+            stats["d0y_min"] = stats["y_min"] - ys[0]
+            stats["d0y_min_abs"] = abs(stats["d0y_min"])
         stats["p0_x"] = xs[0]
         stats["p0_y"] = ys[0]
         stats["p1_x"] = xs[1] if len(xs) > 1 else None
@@ -229,9 +228,9 @@ class MemorySlot:
             stats["dnx_max"] = stats["x_max"] - xs[-1]
             stats["dnx_min"] = stats["x_min"] - xs[-1]
             stats["dnx_min_abs"] = abs(stats["dnx_min"])
-        stats["dny_max"] = stats["y_max"] - ys[-1]
-        stats["dny_min"] = stats["y_min"] - ys[-1]
-        stats["dny_min_abs"] = abs(stats["dny_min"])
+            stats["dny_max"] = stats["y_max"] - ys[-1]
+            stats["dny_min"] = stats["y_min"] - ys[-1]
+            stats["dny_min_abs"] = abs(stats["dny_min"])
         stats["checksum"] = sum(self.pattern_xy) % 256
         return stats
     

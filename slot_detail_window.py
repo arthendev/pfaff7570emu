@@ -283,11 +283,11 @@ class SlotDetailWindow(QDialog):
                 1: ("y_max", "max(ys)"),
                 2: ("dx_abs_max", "max(abs(dxs))"),
                 5: (None, "Unknown"),
-                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),
-                9: ("pn_x", "xs[end]"),
-                11: ("span_x", "max(xs) - min(xs)"),
-                13: ("y_min_to_bound", "0x36 - min(ys)"),
-                15: ("span_y", "max(ys) - min(ys)"),
+                6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),# two-byte H[6-7]
+                8: ("pn_x", "xs[end]"),                    # two-byte H[8-9]
+                10: ("span_x", "max(xs) - min(xs)"),       # two-byte H[10-11]
+                12: ("y_min_to_bound", "0x36 - min(ys)"),  # two-byte H[12-13]
+                14: ("span_y", "max(ys) - min(ys)"),       # two-byte H[14-15]
             }
         else:
             mapping = {
@@ -295,83 +295,141 @@ class SlotDetailWindow(QDialog):
                 1: ("y_max_norm_div_2", "max(ys)//2"),
                 2: ("dx_abs_max", "max(abs(dxs))"),
                 5: (None, "Unknown"),
-                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),
-                9: ("pn_x", "xs[end]"),
-                11: ("span_x", "max(xs) - min(xs)"),
-                13: ("y_min_to_bound", "0x36 - min(ys)"),
-                15: ("span_y", "max(ys) - min(ys)"),
+                6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),# two-byte H[6-7]
+                8: ("pn_x", "xs[end]"),                    # two-byte H[8-9]
+                10: ("span_x", "max(xs) - min(xs)"),       # two-byte H[10-11]
+                12: ("y_min_to_bound", "0x36 - min(ys)"),  # two-byte H[12-13]
+                14: ("span_y", "max(ys) - min(ys)"),       # two-byte H[14-15]
+                16: ("dy_0n", "ys[end] - ys[0]"),          # two-byte H[16-17]
             }
 
-        row = 0
-        for idx in range(max(16, len(header_bytes))):
-            # Get header byte value
-            h_byte = header_bytes[idx] if idx < len(header_bytes) else None
-            h_text = f"0x{h_byte:02X} {h_byte:4d}" if h_byte is not None else "--"
+        two_byte_pairs = {6: 7, 8: 9, 10: 11, 12: 13, 14: 15, 16: 17}
+        skip_indices = set(two_byte_pairs.values())
 
-            # Column 1: Label + hex value
-            lbl = QLabel(f"H[{idx:2d}]  {h_text}")
-            lbl.setFont(QFont("Courier New", 9))
-            self._header_grid.addWidget(lbl, row, 0)
+        mono = QFont("Courier New", 9)
+        bold_font = QFont()
+        bold_font.setBold(True)
 
-            # Column 2: Statistic & value - format: 0xNN  dec  var_name
-            if idx in mapping:
-                stat_key, stat_label = mapping[idx]
-                lbl.setToolTip(stat_label)
-                if stat_key is not None:
-                    stat_val = stats.get(stat_key)
-                    if stat_val is not None:
-                        desc = f"0x{stat_val & 0xFF:02X}  {stat_val:4d}  {stat_key}"
-                    else:
-                        desc = f"--    {'--':>4}  {stat_key}"
-                else:  # None = unknown, no stat
-                    desc = f"--    {'--':>4}  unknown"
+        # Header row — col 0..6
+        for col, text in enumerate(("Byte", "Hex", "Dec", "Stat hex", "Stat dec", "Stat name", "OK/NOK")):
+            hdr = QLabel(text)
+            hdr.setFont(bold_font)
+            self._header_grid.addWidget(hdr, 0, col)
+
+        def _add_row(grid_row, byte_label, h_val, combined, stat_key, stat_val_raw, is_two_byte):
+            """Emit one grid row across all 7 columns."""
+            # Col 0: byte index label
+            idx_lbl = QLabel(byte_label)
+            idx_lbl.setFont(mono)
+            self._header_grid.addWidget(idx_lbl, grid_row, 0)
+
+            # Col 1: header value hex
+            if combined is not None:
+                hex_str = f"0x{combined & 0xFFFF:04X}" if is_two_byte else f"0x{combined:02X}"
             else:
-                desc = ""
+                hex_str = "--"
+            hex_lbl = QLabel(hex_str)
+            hex_lbl.setFont(mono)
+            self._header_grid.addWidget(hex_lbl, grid_row, 1)
 
-            stat_lbl = QLabel(desc)
-            stat_lbl.setFont(QFont("Courier New", 9))
-            self._header_grid.addWidget(stat_lbl, row, 1)
+            # Col 2: header value dec
+            dec_str = str(combined) if combined is not None else "--"
+            dec_lbl = QLabel(dec_str)
+            dec_lbl.setFont(mono)
+            self._header_grid.addWidget(dec_lbl, grid_row, 2)
 
-            # Column 3: OK/NOK status
+            # Cols 3-4: stat hex / dec
+            if stat_key is not None and stat_val_raw is not None:
+                if is_two_byte:
+                    stat_hex_str = f"0x{stat_val_raw & 0xFFFF:04X}"
+                else:
+                    stat_hex_str = f"0x{stat_val_raw & 0xFF:02X}"
+                stat_dec_str = str(stat_val_raw)
+            else:
+                stat_hex_str = "--"
+                stat_dec_str = "--"
+
+            stat_hex_lbl = QLabel(stat_hex_str)
+            stat_hex_lbl.setFont(mono)
+            self._header_grid.addWidget(stat_hex_lbl, grid_row, 3)
+
+            stat_dec_lbl = QLabel(stat_dec_str)
+            stat_dec_lbl.setFont(mono)
+            self._header_grid.addWidget(stat_dec_lbl, grid_row, 4)
+
+            # Col 5: stat name
+            if h_val is not None:  # h_val used as tooltip source; stat_key is the name
+                name_str = stat_key if stat_key is not None else ("unknown" if h_val in mapping else "")
+            else:
+                name_str = stat_key or ""
+            name_lbl = QLabel(name_str or "")
+            name_lbl.setFont(mono)
+            self._header_grid.addWidget(name_lbl, grid_row, 5)
+
+            # Col 6: OK/NOK
             status_lbl = QLabel()
-            status_font = QFont()
-            status_font.setBold(True)
-            status_lbl.setFont(status_font)
-
-            if idx in mapping:
-                stat_key, _ = mapping[idx]
-                if stat_key is not None:
-                    stat_val = stats.get(stat_key)
-                    expected = stat_val & 0xFF if stat_val is not None else None
+            status_lbl.setFont(bold_font)
+            if stat_key is not None and stat_val_raw is not None and combined is not None:
+                expected = stat_val_raw if is_two_byte else (stat_val_raw & 0xFF)
+                if combined == expected:
+                    status_lbl.setText("OK")
+                    status_lbl.setStyleSheet("color: green;")
                 else:
-                    expected = None
-
-                if expected is not None and h_byte is not None:
-                    if h_byte == expected:
-                        status_lbl.setText("OK")
-                        status_lbl.setStyleSheet("color: green;")
-                    else:
-                        status_lbl.setText("NOK")
-                        status_lbl.setStyleSheet("color: red;")
+                    status_lbl.setText("NOK")
+                    status_lbl.setStyleSheet("color: red;")
+            elif stat_key is None and combined is not None:
+                # unmapped single/pair — expected to be 0
+                if combined == 0:
+                    status_lbl.setText("OK")
+                    status_lbl.setStyleSheet("color: green;")
                 else:
-                    status_lbl.setText("--")
+                    status_lbl.setText("NOK")
+                    status_lbl.setStyleSheet("color: red;")
             else:
-                # Unmapped bytes: expected to be 0
-                if h_byte is not None:
-                    if h_byte == 0:
-                        status_lbl.setText("OK")
-                        status_lbl.setStyleSheet("color: green;")
-                    else:
-                        status_lbl.setText("NOK")
-                        status_lbl.setStyleSheet("color: red;")
-                else:
-                    status_lbl.setText("--")
+                status_lbl.setText("--")
+            self._header_grid.addWidget(status_lbl, grid_row, 6)
 
-            self._header_grid.addWidget(status_lbl, row, 2)
-            row += 1
+        grid_row = 1
+        for idx in range(max(16, len(header_bytes))):
+            if idx in skip_indices:
+                continue
+
+            if idx in two_byte_pairs:
+                idx2 = two_byte_pairs[idx]
+                h_hi = header_bytes[idx]  if idx  < len(header_bytes) else None
+                h_lo = header_bytes[idx2] if idx2 < len(header_bytes) else None
+                combined = ((h_hi << 8) | h_lo) if (h_hi is not None and h_lo is not None) else None
+                if combined is not None:
+                    combined = combined - 0x10000 if combined >= 0x8000 else combined # signed conversion
+                byte_label = f"H[{idx}-{idx2}]"
+
+                stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                stat_val_raw = stats.get(stat_key) if stat_key else None
+                if idx in mapping:
+                    # set tooltip via name label — pass idx as h_val sentinel
+                    pass
+                _add_row(grid_row, byte_label, idx, combined, stat_key, stat_val_raw, is_two_byte=True)
+                # apply tooltip to the byte label widget we just added
+                if idx in mapping:
+                    w = self._header_grid.itemAtPosition(grid_row, 0)
+                    if w and w.widget():
+                        w.widget().setToolTip(stat_label)
+            else:
+                h_byte = header_bytes[idx] if idx < len(header_bytes) else None
+                byte_label = f"H[{idx}]"
+
+                stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                stat_val_raw = stats.get(stat_key) if stat_key else None
+                _add_row(grid_row, byte_label, idx, h_byte, stat_key, stat_val_raw, is_two_byte=False)
+                if idx in mapping:
+                    w = self._header_grid.itemAtPosition(grid_row, 0)
+                    if w and w.widget():
+                        w.widget().setToolTip(stat_label)
+
+            grid_row += 1
 
         self._header_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), row, 0, 1, 3)
+            QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), grid_row, 0, 1, 7)
 
     def _populate_pattern_grid(self):
         """Fill the Pattern tab with all pattern statistics."""
@@ -408,6 +466,8 @@ class SlotDetailWindow(QDialog):
             ("is_reversed",         s["is_reversed"],   None),
             ("dx_0n",               s["dx_0n"],         None),
             ("dx_0n_abs",           s["dx_0n_abs"],     None),
+            ("dy_0n",               s["dy_0n"],         None),
+            ("dy_0n_abs",           s["dy_0n_abs"],     None),
             ("d0x_max",             s["d0x_max"],       None),
             ("d0x_min",             s["d0x_min"],       None),
             ("d0x_min_abs",         s["d0x_min_abs"],   None),
