@@ -685,6 +685,7 @@ class PfaffCreativeEmulator(QMainWindow):
                 return
         if self.serial_handler.is_connected:
             self.serial_handler.disconnect()
+        self.console_handler.close()
         event.accept()
 
 

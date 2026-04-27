@@ -2,6 +2,7 @@
 Logger utilities
 """
 
+import atexit
 import logging
 from PyQt5.QtWidgets import QTextEdit
 from PyQt5.QtCore import QDateTime, QObject, pyqtSignal
@@ -33,6 +34,35 @@ class ConsoleHandler(logging.Handler, QObject):
         self.visible_levels = {logging.DEBUG, logging.INFO, logging.WARNING}
         self._log_signal.connect(self._append_to_widget)
 
+        # Register a LIFO atexit cleanup so this handler is purged from
+        # logging._handlerList BEFORE logging.shutdown() iterates it.
+        # We capture only the integer id — never the object itself — so the
+        # cleanup is safe even when the C++ QObject has already been destroyed.
+        handler_id = id(self)
+
+        def _atexit_cleanup():
+            try:
+                logging._handlerList[:] = [
+                    wr for wr in logging._handlerList
+                    if wr() is None or id(wr()) != handler_id
+                ]
+            except Exception:
+                pass
+            try:
+                logging.root.handlers = [
+                    h for h in logging.root.handlers if id(h) != handler_id
+                ]
+            except Exception:
+                pass
+            for _log in list(logging.Logger.manager.loggerDict.values()):
+                if isinstance(_log, logging.Logger):
+                    try:
+                        _log.handlers = [h for h in _log.handlers if id(h) != handler_id]
+                    except Exception:
+                        pass
+
+        atexit.register(_atexit_cleanup)
+
     def set_level_visible(self, level: int, visible: bool):
         """Show or hide messages of the given level in the console."""
         if visible:
@@ -40,9 +70,19 @@ class ConsoleHandler(logging.Handler, QObject):
         else:
             self.visible_levels.discard(level)
 
+    def close(self):
+        """Remove handler from all loggers before the Qt object is destroyed."""
+        logging.root.removeHandler(self)
+        for log in list(logging.Logger.manager.loggerDict.values()):
+            if isinstance(log, logging.Logger):
+                log.removeHandler(self)
+        super().close()
+
     def emit(self, record):
         """Emit a log record to the text widget"""
         try:
+            if self.text_widget is None:
+                return
             if record.levelno in (logging.DEBUG, logging.INFO, logging.WARNING) \
                     and record.levelno not in self.visible_levels:
                 return
