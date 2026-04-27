@@ -5,7 +5,8 @@ Slot detail window - shows full information about a single P-Memory slot.
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QTextEdit, QGroupBox, QTabWidget, QWidget,
                              QScrollArea, QGridLayout, QSizePolicy, QSpacerItem,
-                             QTableWidget, QTableWidgetItem, QMenu, QApplication)
+                             QTableWidget, QTableWidgetItem, QMenu, QApplication,
+                             QCheckBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
 
@@ -42,7 +43,7 @@ class SlotDetailWindow(QDialog):
         self.setWindowTitle(f"Slot P {slot_id} - Details")
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(720)
         self.setMinimumHeight(800)
         self._setup_ui()
         self._load_slot()
@@ -92,6 +93,14 @@ class SlotDetailWindow(QDialog):
         preview_layout.addWidget(self._preview)
         preview_group.setLayout(preview_layout)
         layout.addWidget(preview_group)
+
+        # Logical split checkbox
+        split_row = QHBoxLayout()
+        self._logical_split_cb = QCheckBox("Logical split")
+        self._logical_split_cb.stateChanged.connect(self._refresh_raw_display)
+        split_row.addWidget(self._logical_split_cb)
+        split_row.addStretch()
+        layout.addLayout(split_row)
 
         # Tabbed widget
         tabs = QTabWidget()
@@ -169,8 +178,8 @@ class SlotDetailWindow(QDialog):
         table_layout = QVBoxLayout(table_container)
         table_layout.setContentsMargins(0, 0, 0, 0)
         self._points_table = QTableWidget()
-        self._points_table.setColumnCount(5)
-        self._points_table.setHorizontalHeaderLabels(["#", "Hex (x,y)", "Dec (x,y)", "Hex diff(n, n-1)", "Dec diff(n, n-1)"])
+        self._points_table.setColumnCount(7)
+        self._points_table.setHorizontalHeaderLabels(["#", "Dec (x, y)", "Dec diff(n, n-1)", "Dec (x, y, t)", "Dec (x, y, tacc)", "Hex (x,y)", "Hex diff(n, n-1)"])
         self._points_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._points_table.setSelectionMode(QTableWidget.SingleSelection)
         self._points_table.verticalHeader().setVisible(False)
@@ -458,6 +467,9 @@ class SlotDetailWindow(QDialog):
         ys = data[1::2]
         n = min(len(xs), len(ys))
 
+        xyt = list(self.slot.pattern_xyt)    # x,y,t per stitch
+        xytacc = list(self.slot.pattern_xytacc)  # one value per stitch
+
         mono = QFont("Courier New", 9)
 
         if n == 0:
@@ -465,10 +477,8 @@ class SlotDetailWindow(QDialog):
             it = QTableWidgetItem("--")
             it.setFont(mono)
             self._points_table.setItem(0, 0, it)
-            self._points_table.setItem(0, 1, QTableWidgetItem(""))
-            self._points_table.setItem(0, 2, QTableWidgetItem(""))
-            self._points_table.setItem(0, 3, QTableWidgetItem(""))
-            self._points_table.setItem(0, 4, QTableWidgetItem(""))
+            for col in range(1, 7):
+                self._points_table.setItem(0, col, QTableWidgetItem(""))
             return
 
         self._points_table.setRowCount(n)
@@ -498,11 +508,31 @@ class SlotDetailWindow(QDialog):
             diff_hex_it = QTableWidgetItem(diff_hex_text)
             diff_hex_it.setFont(mono)
 
+            # pattern_xyt: groups of 3 (x, y, t)
+            base = i * 3
+            if base + 2 < len(xyt):
+                xyt_text = f"({xyt[base]}, {xyt[base+1]}, {xyt[base+2]})"
+            else:
+                xyt_text = "--"
+            xyt_it = QTableWidgetItem(xyt_text)
+            xyt_it.setFont(mono)
+
+            # pattern_xytacc: groups of 3 (x, y, tacc)
+            base = i * 3
+            if base + 2 < len(xytacc):
+                xytacc_text = f"({xytacc[base]}, {xytacc[base+1]}, {xytacc[base+2]})"
+            else:
+                xytacc_text = "--"
+            xytacc_it = QTableWidgetItem(xytacc_text)
+            xytacc_it.setFont(mono)
+
             self._points_table.setItem(i, 0, idx_it)
-            self._points_table.setItem(i, 1, hex_it)
-            self._points_table.setItem(i, 2, dec_it)
-            self._points_table.setItem(i, 3, diff_hex_it)
-            self._points_table.setItem(i, 4, diff_dec_it)
+            self._points_table.setItem(i, 1, dec_it)
+            self._points_table.setItem(i, 2, diff_dec_it)
+            self._points_table.setItem(i, 3, xyt_it)
+            self._points_table.setItem(i, 4, xytacc_it)
+            self._points_table.setItem(i, 5, hex_it)
+            self._points_table.setItem(i, 6, diff_hex_it)
 
         # Ensure table expands to fill available space and size columns
         self._points_table.setSizePolicy(self._points_table.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
@@ -598,14 +628,53 @@ class SlotDetailWindow(QDialog):
         self._preview.pattern_xy = list(self.slot.pattern_xy)
         self._preview.pattern_type = self.slot.pattern_type
         self._preview.update()
-        self._header_edit.setPlainText(self.slot.header_raw)
-        self._header_edit_2.setPlainText(self.slot.header_raw)
-        self._pattern_edit.setPlainText(self.slot.pattern_raw)
+        self._refresh_raw_display()
         self._populate_header_grid()
         self._populate_pattern_grid()
         self._populate_points_grid()
         self._clear_btn.setEnabled(self.slot.pattern_type != "Empty")
         self._update_nav_buttons()
+
+    def _format_header_raw(self, raw: str) -> str:
+        """Return header_raw optionally split into 2-char blocks."""
+        if not self._logical_split_cb.isChecked() or not raw:
+            return raw
+        return ' '.join(raw[i:i+2] for i in range(0, len(raw), 2))
+
+    def _format_pattern_raw(self, raw: str, pattern_type: str) -> str:
+        """Return pattern_raw optionally split per the logical structure."""
+        if not self._logical_split_cb.isChecked() or not raw:
+            return raw
+        lines = []
+        i = 0
+        if pattern_type == "9mm":
+            # each stitch: 3 chars, space, 2 chars, newline
+            group = 5
+            while i < len(raw):
+                a = raw[i:i+3]
+                b = raw[i+3:i+5]
+                line = a + (' ' + b if b else '')
+                lines.append(line)
+                i += group
+        else:  # MAXI
+            # each stitch: 3 chars, space, 2 chars, space, 2 chars, newline
+            group = 7
+            while i < len(raw):
+                a = raw[i:i+3]
+                b = raw[i+3:i+5]
+                c = raw[i+5:i+7]
+                line = a + (' ' + b if b else '') + (' ' + c if c else '')
+                lines.append(line)
+                i += group
+        return '\n'.join(lines)
+
+    def _refresh_raw_display(self):
+        """Update header and pattern raw text edits (respects logical split)."""
+        formatted_header = self._format_header_raw(self.slot.header_raw)
+        self._header_edit.setPlainText(formatted_header)
+        self._header_edit_2.setPlainText(formatted_header)
+        self._pattern_edit.setPlainText(
+            self._format_pattern_raw(self.slot.pattern_raw, self.slot.pattern_type))
 
     def refresh(self):
         """Re-read from the slot and update all displayed fields."""

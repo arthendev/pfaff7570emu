@@ -20,6 +20,8 @@ class MemorySlot:
     pattern_raw: str = ""  # pattern as ASCII string (as received from machine, e.g. groups of 5 or 7 chars per stitch)
     pattern_bytes: List[int] = field(default_factory=list)
     pattern_xy: List[int] = field(default_factory=list)
+    pattern_xyt: List[int] = field(default_factory=list)  # for MAXI: x,y,transport
+    pattern_xytacc: List[int] = field(default_factory=list)  # for MAXI: x,y,transport_accumulated
     
     def clear(self):
         """Clear the slot data, resetting to Empty"""
@@ -28,6 +30,8 @@ class MemorySlot:
         self.pattern_raw = ""
         self.pattern_bytes = []
         self.pattern_xy = []
+        self.pattern_xyt = []
+        self.pattern_xytacc = []
         
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
@@ -66,9 +70,12 @@ class MemorySlot:
         MAXI: groups of 7 chars — 3-digit x + 2-digit y + sign char + 1-digit side transport;
               side transport is accumulated (maxi_transport); effective x = raw_x + maxi_transport
         """
+        pattern_bytes = []
+        pattern_xy = []
+        pattern_xyt = []
+        pattern_xytacc = []
+        
         if self.pattern_type == "9mm":
-            pattern_bytes = []
-            pattern_xy = []
             raw = self.pattern_raw
             for i in range(0, len(raw), 5):
                 group = raw[i:i+5]
@@ -83,12 +90,18 @@ class MemorySlot:
                 pattern_bytes.append(y)
                 pattern_xy.append(x)
                 pattern_xy.append(y)
+                pattern_xyt.append(x)
+                pattern_xyt.append(y)
+                pattern_xyt.append(0) # no transport for 9mm
+                pattern_xytacc.append(x)
+                pattern_xytacc.append(y)
+                pattern_xytacc.append(0) # no transport for 9mm
             self.pattern_bytes = pattern_bytes
             self.pattern_xy = pattern_xy
+            self.pattern_xyt = pattern_xyt
+            self.pattern_xytacc = pattern_xytacc
 
         elif self.pattern_type == "MAXI":
-            pattern_bytes = []
-            pattern_xy = []
             side_transport_acc = 0
             raw = self.pattern_raw
             for i in range(0, len(raw), 7):
@@ -107,14 +120,22 @@ class MemorySlot:
                 pattern_bytes.append(side_transport)
                 pattern_xy.append(x)
                 pattern_xy.append(y + side_transport_acc)
+                pattern_xyt.append(x)
+                pattern_xyt.append(y)
+                pattern_xyt.append(side_transport)
+                pattern_xytacc.append(x)
+                pattern_xytacc.append(y)
+                pattern_xytacc.append(side_transport_acc)
             self.pattern_bytes = pattern_bytes
             self.pattern_xy = pattern_xy
+            self.pattern_xyt = pattern_xyt
+            self.pattern_xytacc = pattern_xytacc
 
-        else:
-            pattern_bytes = []
-            pattern_xy = []
-            self.pattern_bytes = pattern_bytes
-            self.pattern_xy = pattern_xy
+        self.pattern_bytes = pattern_bytes
+        self.pattern_xy = pattern_xy
+        self.pattern_xyt = pattern_xyt
+        self.pattern_xytacc = pattern_xytacc
+
 
     def get_pattern_stats(self) -> dict:
         """Compute statistics from the pattern data (x,y interleaved)."""
@@ -221,21 +242,19 @@ class MemorySlot:
             "pattern_type": self.pattern_type,
             "header_raw": self.header_raw,
             "pattern_raw": self.pattern_raw,
-            "pattern_bytes": self.pattern_bytes,
-            "pattern_xy": self.pattern_xy
         }
     
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> 'MemorySlot':
         """Create MemorySlot from dictionary"""
-        return MemorySlot(
+        slot = MemorySlot(
             slot_id=data.get("slot_id", 0),
             pattern_type=data.get("pattern_type", "Empty"),
             header_raw=data.get("header_raw", ""),
             pattern_raw=data.get("pattern_raw", ""),
-            pattern_bytes=data.get("pattern_bytes", []),
-            pattern_xy=data.get("pattern_xy", [])
         )
+        slot.parse_pattern_data()
+        return slot
 
 
 class MachineState:
