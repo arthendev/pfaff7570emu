@@ -54,12 +54,20 @@ class PFAFFProtocol:
     # Read chunk size (max ASCII chars per chunk = 2 * raw bytes)
     READ_CHUNK_SIZE = 250
 
+    # Bell identification strings per model
+    MODEL_BELL_STRINGS = {
+        "PFAFF Creative 7570":   "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1.",
+        "PFAFF Creative 7550":   "Copyright 1992 - 97       G.M. PFAFF AG Creative 7550 CD  Vers. 1.0.",
+        "PFAFF Creative 1475CD": "Copyright 1992 - 97       G.M. PFAFF AG Creative 1475 CD  Vers. 1.0.",
+    }
+
     # Bell command debounce time (seconds)
     BELL_DEBOUNCE_SECONDS = 2.0
     
     def __init__(self, machine_state=None, on_pmemory_changed=None):
         self.machine_state = machine_state
         self.on_pmemory_changed = on_pmemory_changed  # Optional callback: called when P-Memory is modified
+        self._model_name = "PFAFF Creative 7570"
         self.cmd_buffer = bytearray()  # Accumulates bytes for text commands
         self.last_bell_time = 0  # Timestamp of last bell command processed
 
@@ -266,6 +274,13 @@ class PFAFFProtocol:
         cmd.append(checksum)
         return bytes(cmd)
     
+    def configure_model(self, model_name: str):
+        """Set the active machine model (affects bell response string)."""
+        if model_name not in self.MODEL_BELL_STRINGS:
+            raise ValueError(f"Unknown model: {model_name}")
+        self._model_name = model_name
+        logger.info(f"Protocol model set to: {model_name}")
+
     def handle_bell_command(self) -> bytes:
         """
         Handle CTRL_BEL (bell/identify) command with debouncing.
@@ -288,18 +303,27 @@ class PFAFFProtocol:
         self.last_bell_time = current_time
         
         # Build response: identification string + CTRL_ETX
-        
-        resp_ident_7570 = "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1."
+        resp_ident = self.MODEL_BELL_STRINGS.get(self._model_name, self.MODEL_BELL_STRINGS["PFAFF Creative 7570"])
 
         response = bytearray()
-        response.extend(resp_ident_7570.encode('ascii'))
+        response.extend(resp_ident.encode('ascii'))
         response.append(self.CTRL_ETX)
         
-        logger.info("Bell command received - sending identification string [%s]", resp_ident_7570)
+        logger.info("Bell command received - sending identification string [%s]", resp_ident)
         return bytes(response)
 
     def handle_list_pmemory(self) -> bytes:
         """Handle 'PI' + CTRL_ETX (List P-Memory) command.
+
+        Dispatches to the model-specific implementation.
+        """
+        if self._model_name == "PFAFF Creative 1475CD":
+            return self._handle_list_pmemory_1475cd()
+        else:
+            return self._handle_list_pmemory_75xx()
+
+    def _handle_list_pmemory_75xx(self) -> bytes:
+        """List P-Memory handler for PFAFF Creative 7570 and 7550.
 
         Format (all values hex-ASCII encoded, 2 chars per byte, uppercase):
           [num_slots: 2]  +  per slot: [type: 2][size_be: 4][00 00: 4]  +  [free: 4]
@@ -344,6 +368,52 @@ class PFAFFProtocol:
         self._state = self._STATE_WAIT_ACK
         return bytes(response)
 
+    def _handle_list_pmemory_1475cd(self) -> bytes:
+        """List P-Memory handler for PFAFF Creative 7570 and 7550.
+
+        Format (all values hex-ASCII encoded, 2 chars per byte, uppercase):
+          [num_slots: 2]  +  per slot: [type: 2][size_be: 4][00 00: 4]  +  [free: 4]
+          + CTRL_ETB (raw byte)  +  [xor_checksum: 2]
+
+        Type codes: 0x00 = 9mm or Empty, 0x01 = MAXI
+        Size is number of data bytes stored in the slot (big-endian 2 bytes).
+        Free memory is calculated as the difference between total P-Memory size and used bytes.
+        Checksum is XOR of every ASCII byte that precedes CTRL_ETB.
+        """
+
+        logger.info("List P-Memory command received - sending response")
+
+        slots = self.machine_state.p_memory_slots if self.machine_state else []
+
+        ascii_data = bytearray()
+
+        # Number of slots: 1 byte value → 2 ASCII hex chars
+        ascii_data.extend(f"{len(slots):02X}".encode('ascii'))
+
+        # Per-slot: type(1) + size_be(2) + reserved_zeros(2) = 5 bytes → 10 ASCII chars
+        for slot in slots:
+            type_byte = 0x01 if slot.pattern_type == "MAXI" else 0x00
+            size = slot.get_size_bytes()
+            ascii_data.extend(f"{type_byte:02X}".encode('ascii'))
+            ascii_data.extend(f"{size:04X}".encode('ascii'))
+            ascii_data.extend(b"0000")  # 2 reserved zero bytes
+
+        # Free memory calculated as the difference between total P-Memory size and used bytes
+        used_bytes = sum(slot.get_size_bytes() for slot in slots)
+        free_bytes = self.machine_state.p_memory_total_size - used_bytes
+        ascii_data.extend(f"{free_bytes:04X}".encode('ascii'))
+
+        # Checksum over all ASCII data bytes (before CTRL_ETB)
+        checksum = self._calculate_checksum(ascii_data)
+
+        # Final response: ascii_data + CTRL_ETB (raw) + checksum (2 ASCII hex chars)
+        response = bytearray(ascii_data)
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+
+        self._state = self._STATE_WAIT_ACK
+        return bytes(response)
+    
     def handle_delete_pmemory(self, slot_hex: str) -> bytes:
         """Handle 'PL<XX>' + CTRL_ETX (Delete P-Memory) command.
 

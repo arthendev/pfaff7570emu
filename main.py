@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTabWidget, QTextEdit, QFileDialog, 
-                             QMessageBox, QMenu, QAction, QSplitter)
+                             QMessageBox, QMenu, QAction, QSplitter, QActionGroup)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
@@ -212,11 +212,17 @@ class PfaffCreativeEmulator(QMainWindow):
         model_submenu = QMenu("Model", self)
         machine_menu.addMenu(model_submenu)
 
-        self._model_7570_action = QAction("PFAFF Creative 7570", self)
-        self._model_7570_action.setCheckable(True)
-        self._model_7570_action.setChecked(True)
-        self._model_7570_action.toggled.connect(self._on_model_toggled)
-        model_submenu.addAction(self._model_7570_action)
+        model_group = QActionGroup(self)
+        model_group.setExclusive(True)
+        self._model_actions = {}
+        for model_name in ("PFAFF Creative 7570", "PFAFF Creative 7550", "PFAFF Creative 1475CD"):
+            action = QAction(model_name, self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, m=model_name: self._on_model_selected(m))
+            model_group.addAction(action)
+            model_submenu.addAction(action)
+            self._model_actions[model_name] = action
+        self._model_actions["PFAFF Creative 7570"].setChecked(True)
 
         pmemory_submenu = QMenu("P-Memory", self)
         machine_menu.addMenu(pmemory_submenu)
@@ -312,6 +318,11 @@ class PfaffCreativeEmulator(QMainWindow):
         for level, key in self._LEVEL_KEY.items():
             if not self._config["log_to_file"].get(key, True):
                 self._log_to_file_level_actions[level].setChecked(False)
+        saved_model = self._config.get("machine", {}).get("model", "PFAFF Creative 7570")
+        if saved_model in self._model_actions:
+            self._model_actions[saved_model].setChecked(True)
+            self.machine_state.configure_model(saved_model)
+            self.protocol.configure_model(saved_model)
 
     # ------------------------------------------------------------------
     # Recent-files helpers
@@ -587,11 +598,14 @@ class PfaffCreativeEmulator(QMainWindow):
         if not self.serial_handler.connect(port, baudrate):
             logger.warning(f"Auto-connect: failed to open {port}")
 
-    def _on_model_toggled(self, checked: bool):
-        """Keep model action checked and persist the selected model."""
-        self._model_7570_action.setChecked(True)
-        self._config.setdefault("machine", {})["model"] = "PFAFF Creative 7570"
+    def _on_model_selected(self, model_name: str):
+        """Apply model configuration and persist the selected model."""
+        self.machine_state.configure_model(model_name)
+        self.protocol.configure_model(model_name)
+        self.pmemory_tab.update_ui(self.machine_state)
+        self._config.setdefault("machine", {})["model"] = model_name
         self._save_config()
+        logger.info(f"Model set to: {model_name}")
 
     def _on_log_level_toggled(self, level: int, checked: bool):
         """Show or hide a log level in the Qt console."""

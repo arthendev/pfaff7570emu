@@ -264,7 +264,14 @@ class MemorySlot:
 
 class MachineState:
     """Manages the state of the sewing machine"""
-    
+
+    # Model definitions: name -> (p_memory_total_size, num_slots)
+    MODELS = {
+        "PFAFF Creative 7570": (40710, 30), # Check if really 40710
+        "PFAFF Creative 7550": (10000, 30), # Random values, need real ones
+        "PFAFF Creative 1475CD": (5000, 16), # Random values, need real ones
+    }
+
     def __init__(self):
         self.p_memory_total_size = 40710  # total bytes available in P-Memory (sum of all slots)
         self.p_memory_slots: List[MemorySlot] = []
@@ -274,6 +281,19 @@ class MachineState:
         # Initialize P-Memory with 30 empty slots
         for i in range(30):
             self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
+
+    def configure_model(self, model_name: str):
+        """Reconfigure machine parameters for the given model name."""
+        if model_name not in self.MODELS:
+            raise ValueError(f"Unknown model: {model_name}")
+        total_size, num_slots = self.MODELS[model_name]
+        self.p_memory_total_size = total_size
+        current = len(self.p_memory_slots)
+        if num_slots > current:
+            for i in range(current, num_slots):
+                self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
+        elif num_slots < current:
+            self.p_memory_slots = self.p_memory_slots[:num_slots]
     
     
     def get_p_memory_slot(self, slot_id: int) -> MemorySlot:

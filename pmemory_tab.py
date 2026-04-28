@@ -218,7 +218,8 @@ class PMemoryTab(QWidget):
                 item.widget().deleteLater()
         
         columns = 8
-        for i in range(30):
+        num_slots = len(self.machine_state.p_memory_slots)
+        for i in range(num_slots):
             slot = self.machine_state.get_p_memory_slot(i)
             slot_widget = SlotWidget(slot, on_click=self.slot_clicked.emit)
             self.slot_widgets.append(slot_widget)
@@ -226,7 +227,7 @@ class PMemoryTab(QWidget):
             col = i % columns
             self.grid_layout.addWidget(slot_widget, row, col)
         
-        self.grid_layout.setRowStretch(30 // columns + 1, 1)
+        self.grid_layout.setRowStretch(num_slots // columns + 1, 1)
     
     def update_ui(self, machine_state: MachineState):
         """Update UI with new machine state"""
