@@ -49,6 +49,7 @@ class PfaffCreativeEmulator(QMainWindow):
         self.serial_handler = SerialHandler()
         self.serial_handler.data_received.connect(self.on_serial_data_received)
         self.serial_handler.error_occurred.connect(self.on_serial_error)
+        self.serial_handler.connection_changed.connect(self._on_connection_changed)
         self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed)
         
         # Setup UI
@@ -202,6 +203,8 @@ class PfaffCreativeEmulator(QMainWindow):
         
         close_connection_action = QAction("Close Connection", self)
         close_connection_action.triggered.connect(self.close_serial_connection)
+        close_connection_action.setEnabled(False)
+        self._close_connection_action = close_connection_action
         connection_menu.addAction(close_connection_action)
 
         # Machine menu
@@ -451,6 +454,10 @@ class PfaffCreativeEmulator(QMainWindow):
                 QMessageBox.warning(self, "Connection", "No COM ports available")
                 return
             
+            if self.serial_handler.is_connected:
+                logger.info("Closing existing connection before opening a new one")
+                self.serial_handler.disconnect()
+
             logger.info(f"Opening serial connection: {port} at {baudrate} baud")
             if self.serial_handler.connect(port, baudrate):
                 self._config["serial"] = {"port": port, "baudrate": baudrate}
@@ -472,6 +479,10 @@ class PfaffCreativeEmulator(QMainWindow):
         self.serial_handler.disconnect()
         logger.info("Serial connection closed")
         QMessageBox.information(self, "Connection", "Serial connection closed")
+
+    def _on_connection_changed(self, connected: bool):
+        """Enable/disable Close Connection action based on connection state."""
+        self._close_connection_action.setEnabled(connected)
     
     _LEVEL_KEY = {logging.WARNING: "warning", logging.INFO: "info", logging.DEBUG: "debug"}
 
