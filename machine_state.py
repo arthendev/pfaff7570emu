@@ -267,28 +267,39 @@ class MachineState:
 
     # Model definitions: name -> (p_memory_total_size, num_slots)
     MODELS = {
-        "PFAFF Creative 7570": (40710, 30), # Check if really 40710
-        "PFAFF Creative 7550": (10000, 30), # Random values, need real ones
-        "PFAFF Creative 1475CD": (5000, 16), # Random values, need real ones
+        "PFAFF Creative 7570":    (40710, 30), # Check if really 40710
+        "PFAFF Creative 7550":    (40710, 30), # Check if really 40710
+        "PFAFF Creative 1475 CD": (5000, 16),  # Random values, need real ones
     }
 
-    def __init__(self):
-        self.p_memory_total_size = 40710  # total bytes available in P-Memory (sum of all slots)
+    def __init__(self, model_name: str = None):
+        self.p_memory_total_size = None
         self.p_memory_slots: List[MemorySlot] = []
         self.m_memory: List[int] = []
         self.card_memory: List[int] = []
+        self.machine_model = None
         
-        # Initialize P-Memory with 30 empty slots
-        for i in range(30):
-            self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
+        if model_name is not None:
+            self.configure_model(model_name)
 
     def configure_model(self, model_name: str):
         """Reconfigure machine parameters for the given model name."""
         if model_name not in self.MODELS:
             raise ValueError(f"Unknown model: {model_name}")
+        
+        current_model = self.machine_model
+        if (current_model == "PFAFF Creative 1475 CD" and model_name != "PFAFF Creative 1475 CD") \
+            or (current_model != "PFAFF Creative 1475 CD" and model_name == "PFAFF Creative 1475 CD"):
+            logger.warning(f"Switching from {current_model} to {model_name} - resetting all P-Memory slots to Empty to avoid stale data issues.")
+            self.p_memory_slots: List[MemorySlot] = []
+        
         total_size, num_slots = self.MODELS[model_name]
+        self.machine_model = model_name
         self.p_memory_total_size = total_size
         current = len(self.p_memory_slots)
+        if num_slots == 0:
+            for i in range(1, num_slots):
+                self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
         if num_slots > current:
             for i in range(current, num_slots):
                 self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
@@ -312,6 +323,8 @@ class MachineState:
     def to_dict(self) -> Dict[str, Any]:
         """Convert machine state to dictionary for JSON serialization"""
         return {
+            "machine_model": self.machine_model,
+            "p_memory_total_size": self.p_memory_total_size,
             "p_memory_slots": [slot.to_dict() for slot in self.p_memory_slots],
             "m_memory": self.m_memory,
             "card_memory": self.card_memory
@@ -319,6 +332,17 @@ class MachineState:
     
     def from_dict(self, data: Dict[str, Any]):
         """Load machine state from dictionary"""
+        # Restore model first so slot count is correct before loading slots
+        if "machine_model" in data:
+            saved_model = data["machine_model"]
+            if saved_model in self.MODELS:
+                self.configure_model(saved_model)
+            else:
+                logger.warning(f"Unknown machine_model in saved state: {saved_model!r} - ignoring")
+
+        if "p_memory_total_size" in data:
+            self.p_memory_total_size = data["p_memory_total_size"]
+
         # Reset all slots to Empty first so stale data from a previous state
         # never bleeds into the newly loaded state.
         for slot in self.p_memory_slots:

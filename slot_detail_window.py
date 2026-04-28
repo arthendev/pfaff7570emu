@@ -34,12 +34,14 @@ class ClickableLabel(QLabel):
 class SlotDetailWindow(QDialog):
     """Non-modal window showing detailed information about a P-Memory slot."""
 
-    def __init__(self, slots: list, slot_id: int, on_clear=None, on_navigate=None, parent=None):
+    def __init__(self, slots: list, slot_id: int, on_clear=None, on_navigate=None,
+                 machine_model: str = None, parent=None):
         super().__init__(parent)
         self._slots = slots
         self.slot = slots[slot_id]
         self._on_clear_callback = on_clear
         self._on_navigate = on_navigate
+        self._machine_model = machine_model or ""
         self.setWindowTitle(f"Slot P {slot_id} - Details")
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
@@ -268,7 +270,13 @@ class SlotDetailWindow(QDialog):
         return bytes_list
 
     def _populate_header_grid(self):
-        """Populate the header byte analysis grid."""
+        """Populate the header byte analysis grid (dispatches by machine model)."""
+        if self._machine_model == "PFAFF Creative 1475 CD":
+            return self._populate_header_grid_1475cd()
+        else:
+            return self._populate_header_grid_75xx()
+
+    def _populate_header_grid_75xx(self):
         while self._header_grid.count():
             item = self._header_grid.takeAt(0)
             if item.widget():
@@ -430,6 +438,108 @@ class SlotDetailWindow(QDialog):
 
         self._header_grid.addItem(
             QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), grid_row, 0, 1, 7)
+
+    def _populate_header_grid_1475cd(self):
+        """Populate the header byte analysis grid for PFAFF Creative 1475 CD.
+
+        The 1475 CD header has only 4 bytes.
+        """
+        while self._header_grid.count():
+            item = self._header_grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        header_bytes = self._get_header_bytes()
+        stats = self.slot.get_pattern_stats()
+
+        if self.slot.pattern_type == "9mm":
+            mapping = {
+                0: ("y_min",      "min(ys)"),
+                1: ("y_max",      "max(ys)"),
+                2: ("dx_abs_max", "max(abs(dxs))"),
+                3: (None,         "Unknown"),
+            }
+        else:
+            mapping = {
+                0: ("y_min_norm", "min(ys)"),
+                1: ("y_max_norm", "max(ys)"),
+                2: (None,         "Unknown"),
+                3: (None,         "Unknown"),
+            }
+
+        mono = QFont("Courier New", 9)
+        bold_font = QFont()
+        bold_font.setBold(True)
+
+        # Header row
+        for col, text in enumerate(("Byte", "Hex", "Dec", "Stat hex", "Stat dec", "Stat name", "OK/NOK")):
+            hdr = QLabel(text)
+            hdr.setFont(bold_font)
+            self._header_grid.addWidget(hdr, 0, col)
+
+        for grid_row, idx in enumerate(range(4), start=1):
+            h_byte = header_bytes[idx] if idx < len(header_bytes) else None
+            byte_label = f"H[{idx}]"
+            stat_key, stat_label = mapping.get(idx, (None, ""))
+            stat_val_raw = stats.get(stat_key) if stat_key else None
+
+            # Col 0: byte label
+            idx_lbl = QLabel(byte_label)
+            idx_lbl.setFont(mono)
+            if stat_label:
+                idx_lbl.setToolTip(stat_label)
+            self._header_grid.addWidget(idx_lbl, grid_row, 0)
+
+            # Col 1: hex
+            hex_lbl = QLabel(f"0x{h_byte:02X}" if h_byte is not None else "--")
+            hex_lbl.setFont(mono)
+            self._header_grid.addWidget(hex_lbl, grid_row, 1)
+
+            # Col 2: dec
+            dec_lbl = QLabel(str(h_byte) if h_byte is not None else "--")
+            dec_lbl.setFont(mono)
+            self._header_grid.addWidget(dec_lbl, grid_row, 2)
+
+            # Cols 3-4: stat hex / dec
+            if stat_key and stat_val_raw is not None:
+                stat_hex_lbl = QLabel(f"0x{stat_val_raw & 0xFF:02X}")
+                stat_dec_lbl = QLabel(str(stat_val_raw))
+            else:
+                stat_hex_lbl = QLabel("--")
+                stat_dec_lbl = QLabel("--")
+            stat_hex_lbl.setFont(mono)
+            stat_dec_lbl.setFont(mono)
+            self._header_grid.addWidget(stat_hex_lbl, grid_row, 3)
+            self._header_grid.addWidget(stat_dec_lbl, grid_row, 4)
+
+            # Col 5: stat name
+            name_lbl = QLabel(stat_key or "")
+            name_lbl.setFont(mono)
+            self._header_grid.addWidget(name_lbl, grid_row, 5)
+
+            # Col 6: OK/NOK
+            status_lbl = QLabel()
+            status_lbl.setFont(bold_font)
+            if stat_key and stat_val_raw is not None and h_byte is not None:
+                if h_byte == (stat_val_raw & 0xFF):
+                    status_lbl.setText("OK")
+                    status_lbl.setStyleSheet("color: green;")
+                else:
+                    status_lbl.setText("NOK")
+                    status_lbl.setStyleSheet("color: red;")
+            elif stat_key is None and h_byte is not None:
+                if h_byte == 0:
+                    status_lbl.setText("OK")
+                    status_lbl.setStyleSheet("color: green;")
+                else:
+                    status_lbl.setText("NOK")
+                    status_lbl.setStyleSheet("color: red;")
+            else:
+                status_lbl.setText("--")
+            self._header_grid.addWidget(status_lbl, grid_row, 6)
+
+        self._header_grid.addItem(
+            QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), 5, 0, 1, 7)
 
     def _populate_pattern_grid(self):
         """Fill the Pattern tab with all pattern statistics."""

@@ -39,7 +39,7 @@ class PFAFFProtocol:
     # Text command strings (received without the terminating CTRL_ETX)
     CMD_LIST_PMEMORY = "PI"
     CMD_DELETE_PMEMORY_PREFIX = "PL"   # followed by 2 hex-ASCII chars = slot number
-    CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 10 hex-ASCII chars: slot(2)+size(6)+checksum(2)
+    CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 11 hex-ASCII chars: slot(2)+size(6)+CTRL_ETB+checksum(2)
     CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
 
     # Internal state machine states
@@ -58,7 +58,7 @@ class PFAFFProtocol:
     MODEL_BELL_STRINGS = {
         "PFAFF Creative 7570":   "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1.",
         "PFAFF Creative 7550":   "Copyright 1992 - 97       G.M. PFAFF AG Creative 7550 CD  Vers. 1.0.",
-        "PFAFF Creative 1475CD": "Copyright 1992 - 97       G.M. PFAFF AG Creative 1475 CD  Vers. 1.0.",
+        "PFAFF Creative 1475 CD": "Copyright 1992 - 97       G.M. PFAFF AG Creative 1475 CD  Vers. 1.0.",
     }
 
     # Bell command debounce time (seconds)
@@ -81,6 +81,9 @@ class PFAFFProtocol:
         self._write_checksum_chars = bytearray()
         self._write_header_buffer = bytearray()  # raw bytes of the header message
         self._write_header = bytearray()         # stored header data (without checksum)
+
+        # 1475CD list experiment counter (each call adds one extra '0' to ascii_data)
+        self._1475cd_list_call_count = 0
 
         # Read P-Memory state machine
         self._read_data = bytearray()   # full hex-ASCII encoded slot data to send
@@ -207,7 +210,7 @@ class PFAFFProtocol:
             return self.handle_list_pmemory()
         if cmd.startswith(self.CMD_DELETE_PMEMORY_PREFIX) and len(cmd) == 4:
             return self.handle_delete_pmemory(cmd[2:])
-        if cmd.startswith(self.CMD_WRITE_PMEMORY_PREFIX) and len(cmd) == 13:
+        if cmd.startswith(self.CMD_WRITE_PMEMORY_PREFIX) and (len(cmd) == 13 or len(cmd) == 21): # 13 chars for 75xx, 21 chars for 1475 CD
             return self.handle_write_pmemory_init(cmd[2:])
         if cmd.startswith(self.CMD_READ_PMEMORY_PREFIX) and len(cmd) == 7:
             return self.handle_read_pmemory_init(cmd[2:])
@@ -317,7 +320,7 @@ class PFAFFProtocol:
 
         Dispatches to the model-specific implementation.
         """
-        if self._model_name == "PFAFF Creative 1475CD":
+        if self._model_name == "PFAFF Creative 1475 CD":
             return self._handle_list_pmemory_1475cd()
         else:
             return self._handle_list_pmemory_75xx()
@@ -369,10 +372,10 @@ class PFAFFProtocol:
         return bytes(response)
 
     def _handle_list_pmemory_1475cd(self) -> bytes:
-        """List P-Memory handler for PFAFF Creative 7570 and 7550.
+        """List P-Memory handler for PFAFF Creative 1475 CD.
 
         Format (all values hex-ASCII encoded, 2 chars per byte, uppercase):
-          [num_slots: 2]  +  per slot: [type: 2][size_be: 4][00 00: 4]  +  [free: 4]
+          [num_slots: 2]  +  per slot: [type: 2][size_be: 4][00 00 00 00: 8]  +  [free: 4]
           + CTRL_ETB (raw byte)  +  [xor_checksum: 2]
 
         Type codes: 0x00 = 9mm or Empty, 0x01 = MAXI
@@ -380,8 +383,7 @@ class PFAFFProtocol:
         Free memory is calculated as the difference between total P-Memory size and used bytes.
         Checksum is XOR of every ASCII byte that precedes CTRL_ETB.
         """
-
-        logger.info("List P-Memory command received - sending response")
+        logger.info("List P-Memory (1475 CD) command received - sending response")
 
         slots = self.machine_state.p_memory_slots if self.machine_state else []
 
@@ -390,13 +392,13 @@ class PFAFFProtocol:
         # Number of slots: 1 byte value → 2 ASCII hex chars
         ascii_data.extend(f"{len(slots):02X}".encode('ascii'))
 
-        # Per-slot: type(1) + size_be(2) + reserved_zeros(2) = 5 bytes → 10 ASCII chars
+        # Per-slot: type(1) + size_be(2) + reserved_zeros(4) = 7 bytes → 14 ASCII chars
         for slot in slots:
             type_byte = 0x01 if slot.pattern_type == "MAXI" else 0x00
             size = slot.get_size_bytes()
             ascii_data.extend(f"{type_byte:02X}".encode('ascii'))
             ascii_data.extend(f"{size:04X}".encode('ascii'))
-            ascii_data.extend(b"0000")  # 2 reserved zero bytes
+            ascii_data.extend(b"00000000")  # 4 reserved zero bytes
 
         # Free memory calculated as the difference between total P-Memory size and used bytes
         used_bytes = sum(slot.get_size_bytes() for slot in slots)
@@ -456,12 +458,23 @@ class PFAFFProtocol:
         self._write_header_buffer = bytearray()
         self._write_header = bytearray()
 
+
     def handle_write_pmemory_init(self, params: str) -> bytes:
         """Handle 'PN<11 hex chars>' + CTRL_ETX (Write P-Memory header) command.
 
+        Dispatches to the model-specific implementation.
+        """
+        if self._model_name == "PFAFF Creative 1475 CD":
+            return self._handle_write_pmemory_init_1475cd(params)
+        else:
+            return self._handle_write_pmemory_init_75xx(params)
+        
+    def _handle_write_pmemory_init_75xx(self, params: str) -> bytes:
+        """Handle 'PN<11 hex chars>' + CTRL_ETX (Write P-Memory header) command for PFAFF Creative 7570 and 7550.
+
         params is 11 chars: slot(2) + stitch_type(2) + size(4) + CTRL_ETB + checksum(2)
         Checksum is verified over 'PN' + slot + size (10 ASCII bytes).
-        On success: transitions to STATE_WRITE_DATA and returns CTRL_ACK.
+        On success: transitions to STATE_WRITE_HEADER and returns CTRL_ACK.
         On error: returns CTRL_NAK.
         """
         slot_hex     = params[0:2]
@@ -523,6 +536,77 @@ class PFAFFProtocol:
         self._state = self._STATE_WRITE_HEADER
 
         logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {pattern_type_str} - requesting header")
+        return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
+
+    def _handle_write_pmemory_init_1475cd(self, params: str) -> bytes:
+        """Handle 'PN<19 hex chars>' + CTRL_ETX (Write P-Memory header) command for PFAFF Creative 1475CD.
+
+        params is 19 chars: slot(2) + stitch_type(2) + size(4) + header (8) + CTRL_ETB + checksum(2)
+        Checksum is verified over 'PN' + slot + size (10 ASCII bytes).
+        On success: transitions to STATE_WRITE_DATA and returns CTRL_ACK.
+        On error: returns CTRL_NAK.
+        """
+        slot_hex     = params[0:2]
+        type_hex     = params[2:4]
+        size_hex     = params[4:8]
+        header       = params[8:16]
+        ctrl         = params[16]  # should be CTRL_ETB
+        checksum_hex = params[17:19]
+
+        try:
+            slot_id           = int(slot_hex, 16)
+            stitch_type       = int(type_hex, 16)
+            expected_size     = int(size_hex, 16)
+            ctrl_byte         = ord(ctrl)
+            received_checksum = int(checksum_hex, 16)
+        except ValueError:
+            logger.warning(f"Write P-Memory: invalid params {params!r}")
+            return bytes([self.CTRL_NAK])
+        
+        if ctrl_byte != self.CTRL_ETB:
+            logger.warning(f"Write P-Memory: expected CTRL_ETB at position 16, got {ctrl!r}")
+            return bytes([self.CTRL_NAK])
+
+        # Verify checksum over the full command prefix (PN + slot + type + size + header)
+        cmd_bytes  = ("PN" + slot_hex + type_hex + size_hex + header).encode('ascii')
+        calculated = self._calculate_checksum(cmd_bytes)
+        if calculated != received_checksum:
+            logger.warning(
+                f"Write P-Memory: checksum mismatch "
+                f"(received 0x{received_checksum:02X}, calculated 0x{calculated:02X})"
+            )
+            return bytes([self.CTRL_NAK])
+
+        if self.machine_state is None:
+            logger.warning("Write P-Memory: no machine state available")
+            return bytes([self.CTRL_NAK])
+
+        try:
+            self.machine_state.get_p_memory_slot(slot_id)
+        except IndexError:
+            logger.warning(f"Write P-Memory: slot {slot_id} out of range")
+            return bytes([self.CTRL_NAK])
+
+        if stitch_type == 0x00:
+            pattern_type_str = "9mm"
+        elif stitch_type == 0x01:
+            pattern_type_str = "MAXI"
+        else:
+            logger.warning(f"Write P-Memory: unknown stitch type {stitch_type:#02X}")
+            return bytes([self.CTRL_NAK])
+
+        # Valid header - set up write state
+        self._write_slot_id           = slot_id
+        self._write_stitch_type       = pattern_type_str
+        self._write_expected_size     = expected_size
+        self._write_header            = bytearray(header.encode('ascii'))
+        self._write_data_accumulated  = bytearray()
+        self._write_chunk_buffer      = bytearray()
+        self._write_is_last_chunk     = False
+        self._write_checksum_chars    = bytearray()
+        self._state = self._STATE_WRITE_DATA
+
+        logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {pattern_type_str} - requesting data")
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
     def _process_write_header(self) -> bytes:

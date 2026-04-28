@@ -215,7 +215,7 @@ class PfaffCreativeEmulator(QMainWindow):
         model_group = QActionGroup(self)
         model_group.setExclusive(True)
         self._model_actions = {}
-        for model_name in ("PFAFF Creative 7570", "PFAFF Creative 7550", "PFAFF Creative 1475CD"):
+        for model_name in ("PFAFF Creative 7570", "PFAFF Creative 7550", "PFAFF Creative 1475 CD"):
             action = QAction(model_name, self)
             action.setCheckable(True)
             action.triggered.connect(lambda checked, m=model_name: self._on_model_selected(m))
@@ -259,7 +259,7 @@ class PfaffCreativeEmulator(QMainWindow):
         """Rebuild the window title from the current file name and dirty flag."""
         suffix = " *" if self._modified else ""
         if self._title_name:
-            self.setWindowTitle(f"PFAFF 75xx Sewing Machine Emulator - {self._title_name}{suffix}")
+            self.setWindowTitle(f"PFAFF Creative 75xx Emulator - {self._title_name}{suffix}")
         else:
             self.setWindowTitle(f"PFAFF Creative 75xx Emulator{suffix}")
 
@@ -328,6 +328,13 @@ class PfaffCreativeEmulator(QMainWindow):
     # Recent-files helpers
     # ------------------------------------------------------------------
 
+    def _sync_model_menu_to_state(self):
+        """Update the Machine → Model menu checkmark to match machine_state.machine_model."""
+        model = self.machine_state.machine_model
+        if model and model in self._model_actions:
+            self._model_actions[model].setChecked(True)
+            self.protocol.configure_model(model)
+
     RECENT_MAX = 20
 
     def _add_to_recent(self, file_path: str):
@@ -358,6 +365,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self.pmemory_tab.update_ui(self.machine_state)
             self.mmemory_tab.update_ui(self.machine_state)
             self.card_memory_tab.update_ui(self.machine_state)
+            self._sync_model_menu_to_state()
             logger.info(f"File opened: {file_path}")
             self._title_name = Path(file_path).name
             self._set_modified(False)
@@ -384,7 +392,7 @@ class PfaffCreativeEmulator(QMainWindow):
         self.mmemory_tab.update_ui(self.machine_state)
         self.card_memory_tab.update_ui(self.machine_state)
         logger.info("New file created")
-        self._title_name = "[New]"
+        self._title_name = "new file"
         self._set_modified(False)
     
     def open_file(self):
@@ -403,6 +411,7 @@ class PfaffCreativeEmulator(QMainWindow):
                 self.pmemory_tab.update_ui(self.machine_state)
                 self.mmemory_tab.update_ui(self.machine_state)
                 self.card_memory_tab.update_ui(self.machine_state)
+                self._sync_model_menu_to_state()
                 logger.info(f"File opened: {file_path}")
                 self._title_name = Path(file_path).name
                 self._set_modified(False)
@@ -534,7 +543,8 @@ class PfaffCreativeEmulator(QMainWindow):
             return True
 
         win = SlotDetailWindow(self.machine_state.p_memory_slots, slot_id,
-                               on_clear=on_clear, on_navigate=on_navigate, parent=self)
+                               on_clear=on_clear, on_navigate=on_navigate,
+                               machine_model=self.machine_state.machine_model, parent=self)
         win.destroyed.connect(lambda: [
             self._slot_detail_windows.pop(k, None)
             for k, v in list(self._slot_detail_windows.items()) if v is win
@@ -548,7 +558,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self,
             "About PFAFF Creative 75xx Emulator",
             "<h3>PFAFF Creative 75xx Emulator</h3>"
-            "<p>An emulator for the PFAFF Creative 7570 sewing machine, "
+            "<p>An emulator for the PFAFF Creative 7570, 7550 and 1475 CD sewing machines, "
             "enabling communication over a serial interface.</p>"
             "<b>Project:</b> "
             '<a href="https://github.com/arthendev/pfaff7570emu">'
@@ -574,6 +584,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self.pmemory_tab.update_ui(self.machine_state)
             self.mmemory_tab.update_ui(self.machine_state)
             self.card_memory_tab.update_ui(self.machine_state)
+            self._sync_model_menu_to_state()
             logger.info(f"Auto-loaded machine state: {file_path}")
             self._title_name = Path(file_path).name
             self._set_modified(False)
