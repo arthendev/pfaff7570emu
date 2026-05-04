@@ -334,6 +334,7 @@ class PfaffCreativeEmulator(QMainWindow):
         if model and model in self._model_actions:
             self._model_actions[model].setChecked(True)
             self.protocol.configure_model(model)
+            self._config.setdefault("machine", {})["model"] = model
 
     RECENT_MAX = 20
 
@@ -355,7 +356,20 @@ class PfaffCreativeEmulator(QMainWindow):
             action = QAction(path, self)
             action.triggered.connect(lambda checked, p=path: self._open_recent_file(p))
             self._recent_menu.addAction(action)
-        self._recent_menu.setEnabled(bool(self._recent_files))
+        if self._recent_files:
+            self._recent_menu.addSeparator()
+        clear_action = QAction("Clear list", self)
+        clear_action.setEnabled(bool(self._recent_files))
+        clear_action.triggered.connect(self._clear_recent_files)
+        self._recent_menu.addAction(clear_action)
+        self._recent_menu.setEnabled(True)
+
+    def _clear_recent_files(self):
+        """Clear the recent files list."""
+        self._recent_files.clear()
+        self._config["recent_files"] = self._recent_files
+        self._save_config()
+        self._rebuild_recent_menu()
 
     def _open_recent_file(self, file_path: str):
         """Open a file from the recent list."""
