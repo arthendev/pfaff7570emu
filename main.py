@@ -573,10 +573,11 @@ class PfaffCreativeEmulator(QMainWindow):
             "About PFAFF Creative 75xx Emulator",
             "<h3>PFAFF Creative 75xx Emulator</h3>"
             "<p>An emulator for the PFAFF Creative 7570, 7550 and 1475 CD sewing machines, "
-            "enabling communication over a serial interface.</p>"
+            "enabling experiments with communication over a serial interface.</p>"
             "<b>Project:</b> "
             '<a href="https://github.com/arthendev/pfaff7570emu">'
-            "github.com/arthendev/pfaff7570emu</a><br>"
+            "github.com/arthendev/pfaff7570emu</a>"
+            "<p>© 2026 A. Frej (arthendev)</p>"
         )
 
     def _open_preferences(self):
