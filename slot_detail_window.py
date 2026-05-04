@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QTableWidget, QTableWidgetItem, QMenu, QApplication,
                              QCheckBox)
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtGui import QFont, QColor
 
 from machine_state import MemorySlot
@@ -69,6 +71,9 @@ class SlotDetailWindow(QDialog):
 
         self._next_btn = QPushButton("▶")
         self._next_btn.clicked.connect(lambda: self._navigate(+1))
+
+        QShortcut(QKeySequence("Right"), self).activated.connect(lambda: self._navigate(+1))
+        QShortcut(QKeySequence("Left"), self).activated.connect(lambda: self._navigate(-1))
 
         self._slot_label = QLabel()
         self._type_label = QLabel()
