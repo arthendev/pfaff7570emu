@@ -439,8 +439,7 @@ class PFAFFProtocol:
             logger.warning(f"Delete P-Memory: slot {slot_id} out of range")
             return bytes([self.CTRL_NAK])
 
-        slot.pattern_type = "Empty"
-        slot.pattern_xy = []
+        slot.clear()
         logger.info(f"Delete P-Memory: slot {slot_id} cleared")
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
