@@ -93,8 +93,8 @@ class PatternPreview(QFrame):
                         cx, cy = to_screen(xs[i], ys[i])
                         painter.drawEllipse(cx - 2, cy - 2, 4, 4)
 
-                # Highlight selected point: small filled black rectangle (drawn before colored dots)
-                if self.show_points and self.selected_point is not None:
+                # Highlight selected point: always visible, even when show_points is off
+                if self.selected_point is not None:
                     sel = self.selected_point
                     if 0 <= sel < n:
                         sx, sy = to_screen(xs[sel], ys[sel])
