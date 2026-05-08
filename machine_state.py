@@ -267,9 +267,9 @@ class MachineState:
 
     # Model definitions: name -> (p_memory_total_size, num_slots)
     MODELS = {
-        "PFAFF Creative 7570":    (40710, 30), # Check if really 40710
-        "PFAFF Creative 7550":    (40710, 30), # Check if really 40710
-        "PFAFF Creative 1475 CD": (5000, 16),  # Random values, need real ones
+        "PFAFF Creative 7570":    (40710, 30), # From real machine
+        "PFAFF Creative 7550":    (40710, 30), # From real machine
+        "PFAFF Creative 1475 CD": (5000, 16),  # Arbitrary pick, need real ones
     }
 
     def __init__(self, model_name: str = None):

@@ -357,7 +357,7 @@ class PFAFFProtocol:
 
         # Free memory calculated as the difference between total P-Memory size and used bytes
         used_bytes = sum(slot.get_size_bytes() for slot in slots)
-        free_bytes = self.machine_state.p_memory_total_size - used_bytes
+        free_bytes = self.machine_state.p_memory_total_size - used_bytes + 1 # Unknown why but real machines report 1 byte more free than what the original SW shows
         ascii_data.extend(f"{free_bytes:04X}".encode('ascii'))
 
         # Checksum over all ASCII data bytes (before CTRL_ETB)
@@ -402,7 +402,7 @@ class PFAFFProtocol:
 
         # Free memory calculated as the difference between total P-Memory size and used bytes
         used_bytes = sum(slot.get_size_bytes() for slot in slots)
-        free_bytes = self.machine_state.p_memory_total_size - used_bytes
+        free_bytes = self.machine_state.p_memory_total_size - used_bytes + 1 # Unknown why but real machines report 1 byte more free than what the original SW shows
         ascii_data.extend(f"{free_bytes:04X}".encode('ascii'))
 
         # Checksum over all ASCII data bytes (before CTRL_ETB)
