@@ -48,7 +48,6 @@ class PFAFFProtocol:
     _STATE_WRITE_CHECKSUM = 2     # collecting 2-byte hex checksum after chunk terminator
     _STATE_WAIT_ACK = 3           # waiting for CTRL_ACK from host after PI response
     _STATE_READ_WAIT_ACK = 4      # waiting for CTRL_ACK after a read chunk
-    _STATE_READ_WAIT_EOT = 5      # waiting for CTRL_EOT after final-chunk ACK
     _STATE_WRITE_HEADER = 6       # collecting header bytes after PN init ACK
 
     # Read chunk size (max ASCII chars per chunk = 2 * raw bytes)
@@ -139,7 +138,8 @@ class PFAFFProtocol:
                     self._abort_read()
                 elif byte == self.CTRL_ACK:
                     if self._read_last_chunk_sent:
-                        self._state = self._STATE_READ_WAIT_EOT
+                        logger.info("Read P-Memory: transfer complete (ACK received) - resetting to idle")
+                        self._abort_read()
                     else:
                         response.extend(self._send_next_read_chunk())
                 elif byte == self.CTRL_NAK:
@@ -147,16 +147,6 @@ class PFAFFProtocol:
                     self._abort_read()
                 else:
                     logger.warning(f"Read P-Memory: unexpected byte 0x{byte:02X} while waiting for ACK")
-
-            elif self._state == self._STATE_READ_WAIT_EOT:
-                if byte == self.CTRL_EOT:
-                    logger.info("Read P-Memory: transfer complete (EOT received) - resetting to idle")
-                    self._abort_read()
-                elif byte == self.CTRL_NAK:
-                    logger.warning("Read P-Memory: NAK received after last chunk, aborting")
-                    self._abort_read()
-                else:
-                    logger.warning(f"Read P-Memory: unexpected byte 0x{byte:02X} while waiting for EOT")
 
             elif self._state == self._STATE_WRITE_DATA:
                 if byte == self.CTRL_EOT:
