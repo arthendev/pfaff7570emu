@@ -280,7 +280,8 @@ class PfaffCreativeEmulator(QMainWindow):
             "machine":         {"model": "PFAFF Creative 7570"},
             "general":         {"auto_connect": False, "open_state_on_start": False},
         }
-        config_path = Path(__file__).parent / self._CONFIG_FILE
+        base_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+        config_path = base_dir / self._CONFIG_FILE
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
@@ -299,7 +300,8 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def _save_config(self):
         """Persist current configuration to JSON file."""
-        config_path = Path(__file__).parent / self._CONFIG_FILE
+        base_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+        config_path = base_dir / self._CONFIG_FILE
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(self._config, f, indent=2)
