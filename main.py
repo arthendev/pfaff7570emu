@@ -402,7 +402,7 @@ class PfaffCreativeEmulator(QMainWindow):
         for slot in self.machine_state.p_memory_slots:
             slot.clear()
         self.machine_state.m_memory = []
-        self.machine_state.card_memory = []
+        self.machine_state.clear_card_memory()
         self.current_file = None
         self.pmemory_tab.update_ui(self.machine_state)
         self.mmemory_tab.update_ui(self.machine_state)

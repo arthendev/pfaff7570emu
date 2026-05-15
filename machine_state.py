@@ -5,7 +5,7 @@ Machine state model and data persistence
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict, field
 
 logger = logging.getLogger(__name__)
@@ -262,6 +262,147 @@ class MemorySlot:
         return slot
 
 
+@dataclass
+class CardMemorySlot:
+    """Represents a single slot on a memory card"""
+    slot_id: int
+    pattern_type: str = ""  # "9mm", "MAXI", "Small hoop", "Large hoop"
+    header_raw: str = ""
+    preview_raw: str = ""
+    pattern_raw: str = ""
+    filename: str = ""
+    pattern_bytes: List[int] = field(default_factory=list)
+    pattern_xy: List[int] = field(default_factory=list)
+    pattern_xyt: List[int] = field(default_factory=list)
+    pattern_xytacc: List[int] = field(default_factory=list)
+
+    def get_size_bytes(self) -> int:
+        """Get size of data in bytes"""
+        return len(self.pattern_bytes)
+
+    def get_size_stitches(self) -> int:
+        """Get number of stitches in the pattern"""
+        return len(self.pattern_xy) // 2
+
+    def set_slot_data(self, pattern_type: str, header_raw: str, preview_raw: str, pattern_raw: str) -> None:
+        """Set slot data and parse the pattern"""
+        self.pattern_type = pattern_type
+        self.header_raw = header_raw
+        self.preview_raw = preview_raw
+        self.pattern_raw = pattern_raw
+        self.parse_pattern_data()
+
+    def parse_pattern_data(self) -> None:
+        """Parse pattern_raw into pattern_bytes and pattern_xy.
+
+        9mm:  groups of 5 chars — 3-digit x + 2-digit y
+        MAXI: groups of 7 chars — 3-digit x + 2-digit y + sign char + 1-digit side transport
+        Embroidery (Small hoop / Large hoop): format unknown, no parsing yet.
+        """
+        pattern_bytes: List[int] = []
+        pattern_xy: List[int] = []
+        pattern_xyt: List[int] = []
+        pattern_xytacc: List[int] = []
+
+        if self.pattern_type == "9mm":
+            raw = self.pattern_raw
+            for i in range(0, len(raw), 5):
+                group = raw[i:i+5]
+                if len(group) < 5:
+                    break
+                try:
+                    x = int(group[0:3])
+                    y = int(group[3:5])
+                except ValueError:
+                    break
+                pattern_bytes.extend([x, y])
+                pattern_xy.extend([x, y])
+                pattern_xyt.extend([x, y, 0])
+                pattern_xytacc.extend([x, y, 0])
+
+        elif self.pattern_type == "MAXI":
+            side_transport_acc = 0
+            raw = self.pattern_raw
+            for i in range(0, len(raw), 7):
+                group = raw[i:i+7]
+                if len(group) < 7:
+                    break
+                try:
+                    x = int(group[0:3])
+                    y = int(group[3:5])
+                    side_transport = int(group[5:7])
+                    side_transport_acc += side_transport
+                except (ValueError, IndexError):
+                    break
+                pattern_bytes.extend([x, y, side_transport])
+                pattern_xy.extend([x, y + side_transport_acc])
+                pattern_xyt.extend([x, y, side_transport])
+                pattern_xytacc.extend([x, y, side_transport_acc])
+
+        self.pattern_bytes = pattern_bytes
+        self.pattern_xy = pattern_xy
+        self.pattern_xyt = pattern_xyt
+        self.pattern_xytacc = pattern_xytacc
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            "slot_id": self.slot_id,
+            "pattern_type": self.pattern_type,
+            "header_raw": self.header_raw,
+            "preview_raw": self.preview_raw,
+            "pattern_raw": self.pattern_raw,
+            "filename": self.filename,
+        }
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> 'CardMemorySlot':
+        """Create CardMemorySlot from dictionary"""
+        slot = CardMemorySlot(
+            slot_id=data.get("slot_id", 0),
+            pattern_type=data.get("pattern_type", ""),
+            header_raw=data.get("header_raw", ""),
+            preview_raw=data.get("preview_raw", ""),
+            pattern_raw=data.get("pattern_raw", ""),
+            filename=data.get("filename", ""),
+        )
+        slot.parse_pattern_data()
+        return slot
+
+
+class CardMemorySpace:
+    """One addressable space on a memory card, holding only occupied slots."""
+
+    def __init__(self, space_name: str):
+        self.space_name = space_name
+        self.slots: Dict[int, CardMemorySlot] = {}
+
+    def get_slot(self, slot_id: int) -> Optional[CardMemorySlot]:
+        return self.slots.get(slot_id)
+
+    def set_slot(self, slot: CardMemorySlot) -> None:
+        self.slots[slot.slot_id] = slot
+
+    def delete_slot(self, slot_id: int) -> None:
+        self.slots.pop(slot_id, None)
+
+    def clear(self) -> None:
+        self.slots.clear()
+
+    def sorted_slots(self) -> List[CardMemorySlot]:
+        """Return all occupied slots sorted by slot_id."""
+        return sorted(self.slots.values(), key=lambda s: s.slot_id)
+
+    def to_dict(self) -> List[Dict[str, Any]]:
+        return [slot.to_dict() for slot in self.sorted_slots()]
+
+    def from_dict(self, data: List[Dict[str, Any]]) -> None:
+        self.slots.clear()
+        for item in data:
+            slot = CardMemorySlot.from_dict(item)
+            self.slots[slot.slot_id] = slot
+
+
 class MachineState:
     """Manages the state of the sewing machine"""
 
@@ -276,7 +417,9 @@ class MachineState:
         self.p_memory_total_size = None
         self.p_memory_slots: List[MemorySlot] = []
         self.m_memory: List[int] = []
-        self.card_memory: List[int] = []
+        self.card_9mm = CardMemorySpace("9mm")
+        self.card_maxi = CardMemorySpace("MAXI")
+        self.card_embroidery = CardMemorySpace("Embroidery")
         self.machine_model = None
         
         if model_name is not None:
@@ -320,6 +463,12 @@ class MachineState:
         else:
             raise IndexError(f"Invalid slot ID: {slot.slot_id}")
     
+    def clear_card_memory(self) -> None:
+        """Clear all card memory spaces."""
+        self.card_9mm.clear()
+        self.card_maxi.clear()
+        self.card_embroidery.clear()
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert machine state to dictionary for JSON serialization"""
         return {
@@ -327,7 +476,11 @@ class MachineState:
             "p_memory_total_size": self.p_memory_total_size,
             "p_memory_slots": [slot.to_dict() for slot in self.p_memory_slots],
             "m_memory": self.m_memory,
-            "card_memory": self.card_memory
+            "card_memory": {
+                "9mm": self.card_9mm.to_dict(),
+                "MAXI": self.card_maxi.to_dict(),
+                "Embroidery": self.card_embroidery.to_dict(),
+            },
         }
     
     def from_dict(self, data: Dict[str, Any]):
@@ -360,8 +513,17 @@ class MachineState:
         if "m_memory" in data:
             self.m_memory = data["m_memory"]
 
-        if "card_memory" in data:
-            self.card_memory = data["card_memory"]
+        # Load card memory — new format is a dict with space keys; old format was a plain
+        # list (ignored for backwards compatibility).
+        self.clear_card_memory()
+        card_data = data.get("card_memory")
+        if isinstance(card_data, dict):
+            if "9mm" in card_data:
+                self.card_9mm.from_dict(card_data["9mm"])
+            if "MAXI" in card_data:
+                self.card_maxi.from_dict(card_data["MAXI"])
+            if "Embroidery" in card_data:
+                self.card_embroidery.from_dict(card_data["Embroidery"])
     
     def save_to_file(self, file_path: str):
         """Save machine state to JSON file"""

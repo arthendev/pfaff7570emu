@@ -41,6 +41,10 @@ class PFAFFProtocol:
     CMD_DELETE_PMEMORY_PREFIX = "PL"   # followed by 2 hex-ASCII chars = slot number
     CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 11 hex-ASCII chars: slot(2)+size(6)+CTRL_ETB+checksum(2)
     CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
+    CMD_LIST_CARD = "KI"
+    CMD_WRITE_CARD = "KN"
+    CMD_READ_CARD_PREVIEW = "KB"
+    CMD_DELETE_CARD = "KL"
 
     # Internal state machine states
     _STATE_IDLE = 0
@@ -49,6 +53,21 @@ class PFAFFProtocol:
     _STATE_WAIT_ACK = 3           # waiting for CTRL_ACK from host after PI response
     _STATE_READ_WAIT_ACK = 4      # waiting for CTRL_ACK after a read chunk
     _STATE_WRITE_HEADER = 6       # collecting header bytes after PN init ACK
+    _STATE_WRITE_CARD_HEADER = 7  # collecting 31 raw header bytes for KN command
+    _STATE_WRITE_CARD_DATA = 8    # collecting card data chunks
+    _STATE_READ_KB_PARAMS = 9     # collecting 8 raw parameter bytes for KB command
+    _STATE_READ_KB_WAIT_ETX = 10  # after 8 KB params, waiting for CTRL_ETX terminator
+    _STATE_READ_KB_WAIT_ACK = 11  # waiting for CTRL_ACK after a KB preview chunk
+    _STATE_READ_KL_PARAMS = 12    # collecting 7 raw parameter bytes for KL command
+    _STATE_READ_KL_WAIT_ETX = 13  # after 7 KL params, waiting for CTRL_ETX terminator
+
+    # Card data chunk sub-states (used when _state == _STATE_WRITE_CARD_DATA)
+    _CARD_CHUNK_WAIT_START  = 0  # waiting for CTRL_ENQ (or bare size byte)
+    _CARD_CHUNK_WAIT_SIZE   = 1  # received CTRL_ENQ, waiting for payload size byte
+    _CARD_CHUNK_PAYLOAD     = 2  # collecting payload bytes
+    _CARD_CHUNK_SIZE_REPEAT = 3  # waiting for repeated size confirmation byte
+    _CARD_CHUNK_ETB         = 4  # waiting for CTRL_ETB
+    _CARD_CHUNK_CHECKSUM    = 5  # collecting 2-byte checksum
 
     # Read chunk size (max ASCII chars per chunk = 2 * raw bytes)
     READ_CHUNK_SIZE = 250
@@ -89,6 +108,30 @@ class PFAFFProtocol:
         self._read_offset = 0
         self._read_last_chunk_sent = False
 
+        # Write Card state machine
+        self._write_card_header_buffer = bytearray()
+        self._write_card_header_raw = bytearray()
+        self._write_card_stitch_type = None
+        self._write_card_preview_size = 0
+        self._write_card_pattern_size = 0
+        self._write_card_filename_len = 0
+        self._write_card_slot_id = None
+        self._write_card_data_accumulated = bytearray()
+        self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
+        self._write_card_chunk_has_enq = False
+        self._write_card_chunk_size = 0
+        self._write_card_chunk_size_repeat = 0
+        self._write_card_chunk_buffer = bytearray()
+        self._write_card_chunk_checksum_buf = bytearray()
+
+        # Read Card Preview (KB) state machine
+        self._kb_params_buffer = bytearray()
+        self._kb_preview_data = bytearray()
+        self._kb_preview_offset = 0
+
+        # Delete Card Slot (KL) state machine
+        self._kl_params_buffer = bytearray()
+
     def process_incoming(self, data: bytes) -> bytes:
         """
         Process bytes received from serial port.
@@ -117,6 +160,16 @@ class PFAFFProtocol:
                     response.extend(self._dispatch_text_command(cmd_str))
                 else:
                     self.cmd_buffer.append(byte)
+                    if bytes(self.cmd_buffer) == b"KB":
+                        # KB command: 8 raw parameter bytes follow (any byte value valid)
+                        self.cmd_buffer.clear()
+                        self._kb_params_buffer = bytearray()
+                        self._state = self._STATE_READ_KB_PARAMS
+                    elif bytes(self.cmd_buffer) == b"KL":
+                        # KL command: 7 raw parameter bytes follow (any byte value valid)
+                        self.cmd_buffer.clear()
+                        self._kl_params_buffer = bytearray()
+                        self._state = self._STATE_READ_KL_PARAMS
 
             elif self._state == self._STATE_WAIT_ACK:
                 if byte == self.CTRL_EOT:
@@ -191,6 +244,65 @@ class PFAFFProtocol:
                 else:
                     self._write_header_buffer.append(byte)
 
+            elif self._state == self._STATE_WRITE_CARD_HEADER:
+                # Collect raw bytes — any byte value is valid including CTRL_ETX (0x03).
+                # The header is always exactly 31 bytes; byte 30 must be CTRL_ETX.
+                self._write_card_header_buffer.append(byte)
+                if len(self._write_card_header_buffer) == 31:
+                    response.extend(self._process_write_card_header())
+
+            elif self._state == self._STATE_WRITE_CARD_DATA:
+                response.extend(self._handle_card_data_byte(byte))
+
+            elif self._state == self._STATE_READ_KB_PARAMS:
+                # Accept any byte value (including control characters) as raw parameter
+                self._kb_params_buffer.append(byte)
+                if len(self._kb_params_buffer) == 8:
+                    self._state = self._STATE_READ_KB_WAIT_ETX
+
+            elif self._state == self._STATE_READ_KB_WAIT_ETX:
+                if byte == self.CTRL_ETX:
+                    response.extend(self._handle_read_card_preview())
+                elif byte == self.CTRL_EOT:
+                    logger.info("KB: EOT received waiting for ETX - resetting to idle")
+                    self._state = self._STATE_IDLE
+                    self._kb_params_buffer = bytearray()
+                else:
+                    logger.warning(f"KB: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+
+            elif self._state == self._STATE_READ_KB_WAIT_ACK:
+                if byte == self.CTRL_EOT:
+                    logger.info("KB preview: EOT received - aborting transfer")
+                    self._abort_read_kb()
+                elif byte == self.CTRL_ACK:
+                    if self._kb_preview_offset >= len(self._kb_preview_data):
+                        logger.info("KB preview: transfer complete, sending CTRL_ETX")
+                        self._abort_read_kb()
+                        response.append(self.CTRL_ETX)
+                    else:
+                        response.extend(self._send_next_kb_chunk())
+                elif byte == self.CTRL_NAK:
+                    logger.warning("KB preview: NAK received - aborting transfer")
+                    self._abort_read_kb()
+                else:
+                    logger.warning(f"KB preview: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
+
+            elif self._state == self._STATE_READ_KL_PARAMS:
+                # Accept any byte value (including control characters) as raw parameter
+                self._kl_params_buffer.append(byte)
+                if len(self._kl_params_buffer) == 7:
+                    self._state = self._STATE_READ_KL_WAIT_ETX
+
+            elif self._state == self._STATE_READ_KL_WAIT_ETX:
+                if byte == self.CTRL_ETX:
+                    response.extend(self._handle_delete_card_slot())
+                elif byte == self.CTRL_EOT:
+                    logger.info("KL: EOT received waiting for ETX - resetting to idle")
+                    self._state = self._STATE_IDLE
+                    self._kl_params_buffer = bytearray()
+                else:
+                    logger.warning(f"KL: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+
         return bytes(response)
 
     def _dispatch_text_command(self, cmd: str) -> bytes:
@@ -198,6 +310,10 @@ class PFAFFProtocol:
         logger.debug(f"Text command received: {cmd!r}")
         if cmd == self.CMD_LIST_PMEMORY:
             return self.handle_list_pmemory()
+        if cmd == self.CMD_LIST_CARD:
+            return self.handle_list_card()
+        if cmd == self.CMD_WRITE_CARD:
+            return self.handle_write_card_init()
         if cmd.startswith(self.CMD_DELETE_PMEMORY_PREFIX) and len(cmd) == 4:
             return self.handle_delete_pmemory(cmd[2:])
         if cmd.startswith(self.CMD_WRITE_PMEMORY_PREFIX) and (len(cmd) == 13 or len(cmd) == 21): # 13 chars for 75xx, 21 chars for 1475 CD
@@ -314,6 +430,347 @@ class PFAFFProtocol:
             return self._handle_list_pmemory_1475cd()
         else:
             return self._handle_list_pmemory_75xx()
+
+    def handle_list_card(self) -> bytes:
+        """Handle 'KI' + CTRL_ETX (List Memory Card content) command.
+
+        Response format (all bytes hex-ASCII encoded, 2 uppercase chars per byte):
+          06 00 00 10 02 18 01 00 <N9mm> 03 C8 <NEmbr>
+          00 00 00 00 00 00 02 00 <NMaxi> 00 00 00 00 00 00 00 00 00 18
+          + CTRL_ETB (raw byte) + checksum (2 hex-ASCII chars)
+
+        <N9mm>  = number of 9mm patterns on the card
+        <NEmbr> = number of Embroidery patterns on the card
+        <NMaxi> = number of MAXI patterns on the card
+        Checksum is the sum of all ASCII bytes before CTRL_ETB, modulo 256.
+        """
+        logger.info("List Card Memory command received - sending response")
+
+        if self.machine_state is not None:
+            n_9mm  = len(self.machine_state.card_9mm.slots)
+            n_embr = len(self.machine_state.card_embroidery.slots)
+            n_maxi = len(self.machine_state.card_maxi.slots)
+        else:
+            n_9mm = n_embr = n_maxi = 0
+
+        raw_bytes = bytes([
+            0x06, 0x00, 0x00, 0x10, 0x02, 0x18, 0x01, 0x00,
+            n_9mm & 0xFF,
+            0x03, 0xC8,
+            n_embr & 0xFF,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
+            n_maxi & 0xFF,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+        ])
+
+        ascii_data = bytearray()
+        for b in raw_bytes:
+            ascii_data.extend(f"{b:02X}".encode('ascii'))
+
+        checksum = self._calculate_checksum(ascii_data)
+
+        response = bytearray(ascii_data)
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+
+        self._state = self._STATE_IDLE
+        return bytes(response)
+
+    def handle_write_card_init(self) -> bytes:
+        """Handle 'KN' + CTRL_ETX (Write Card Memory) command.
+
+        Resets the card-write state and transitions to _STATE_WRITE_CARD_HEADER
+        to collect the 31 raw header bytes that follow.
+        Returns empty bytes (no immediate response — wait for header).
+        """
+        logger.info("Write Card Memory: KN command received - collecting 31-byte header")
+        self._write_card_header_buffer = bytearray()
+        self._write_card_header_raw = bytearray()
+        self._write_card_stitch_type = None
+        self._write_card_preview_size = 0
+        self._write_card_pattern_size = 0
+        self._write_card_filename_len = 0
+        self._write_card_slot_id = None
+        self._state = self._STATE_WRITE_CARD_HEADER
+        return b""
+
+    def _process_write_card_header(self) -> bytes:
+        """Process the 31-byte raw card-write header and respond with ACK + slot info.
+
+        Header layout (raw bytes, 0-indexed):
+          [6]     stitch type: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
+          [24-25] preview image size in bytes (big-endian uint16)
+          [26-27] pattern data size in bytes (big-endian uint16)
+          [28]    filename field length including null-terminator
+          [30]    must be CTRL_ETX (0x03) — terminator byte
+
+        Any byte position (including 0-29) may contain 0x03; the header is
+        delimited by byte count (31), not by CTRL_ETX.
+
+        Response on success: CTRL_ACK + 2 bytes
+          9mm:        0xC0, slot_id
+          MAXI:       0xD0, slot_id
+          Embroidery: 0xC0, slot_id + 0xC8   (slot 0 → 0xC8, slot 1 → 0xC9, …)
+
+        On error: CTRL_NAK, resets to idle.
+        Transitions to _STATE_WRITE_CARD_DATA to await incoming data chunks.
+        """
+        buf = self._write_card_header_buffer
+
+        if buf[30] != self.CTRL_ETX:
+            logger.warning(f"Write Card: header byte 30 is not CTRL_ETX (got 0x{buf[30]:02X}) - aborting")
+            self._abort_write_card()
+            return bytes([self.CTRL_NAK])
+
+        stitch_byte = buf[6]
+        if stitch_byte == 0x01:
+            self._write_card_stitch_type = "9mm"
+        elif stitch_byte == 0x02:
+            self._write_card_stitch_type = "MAXI"
+        elif stitch_byte == 0x03:
+            self._write_card_stitch_type = "Embroidery"
+        else:
+            logger.warning(f"Write Card: unknown stitch type byte 0x{stitch_byte:02X} - aborting")
+            self._abort_write_card()
+            return bytes([self.CTRL_NAK])
+
+        self._write_card_preview_size = (buf[24] << 8) | buf[25]
+        self._write_card_pattern_size = (buf[26] << 8) | buf[27]
+        self._write_card_filename_len = buf[28]
+        self._write_card_header_raw = bytes(buf)
+
+        if self.machine_state is None:
+            logger.warning("Write Card: no machine state available - aborting")
+            self._abort_write_card()
+            return bytes([self.CTRL_NAK])
+
+        if self._write_card_stitch_type == "9mm":
+            space = self.machine_state.card_9mm
+            slot_id = self._next_free_card_slot(space)
+            response_code = 0xC0
+            response_slot = slot_id
+        elif self._write_card_stitch_type == "MAXI":
+            space = self.machine_state.card_maxi
+            slot_id = self._next_free_card_slot(space)
+            response_code = 0xD0
+            response_slot = slot_id
+        else:  # Embroidery
+            space = self.machine_state.card_embroidery
+            slot_id = self._next_free_card_slot(space)
+            response_code = 0xC0
+            response_slot = slot_id + 0xC8
+
+        self._write_card_slot_id = slot_id
+
+        logger.info(
+            f"Write Card: {self._write_card_stitch_type} pattern assigned to slot {slot_id}, "
+            f"preview={self._write_card_preview_size} bytes, "
+            f"pattern={self._write_card_pattern_size} bytes, "
+            f"filename_len={self._write_card_filename_len} - ACK 0x{response_code:02X} 0x{response_slot:02X}"
+        )
+        self._state = self._STATE_WRITE_CARD_DATA
+        return bytes([self.CTRL_ACK, response_code, response_slot])
+
+    def _next_free_card_slot(self, space) -> int:
+        """Return the lowest non-negative slot_id not currently occupied in the given card space."""
+        used = set(space.slots.keys())
+        i = 0
+        while i in used:
+            i += 1
+        return i
+
+    def _abort_write_card(self) -> None:
+        """Abort an in-progress card write and return to idle state."""
+        self._state = self._STATE_IDLE
+        self._write_card_header_buffer = bytearray()
+        self._write_card_header_raw = bytearray()
+        self._write_card_stitch_type = None
+        self._write_card_preview_size = 0
+        self._write_card_pattern_size = 0
+        self._write_card_filename_len = 0
+        self._write_card_slot_id = None
+        self._write_card_data_accumulated = bytearray()
+        self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
+        self._write_card_chunk_has_enq = False
+        self._write_card_chunk_size = 0
+        self._write_card_chunk_size_repeat = 0
+        self._write_card_chunk_buffer = bytearray()
+        self._write_card_chunk_checksum_buf = bytearray()
+
+    def _handle_card_data_byte(self, byte: int) -> bytes:
+        """Route one incoming byte through the card data chunk sub-state machine."""
+        sub = self._write_card_data_substate
+
+        if sub == self._CARD_CHUNK_WAIT_START:
+            if byte == self.CTRL_EOT:
+                logger.info("Write Card: CTRL_EOT between chunks - aborting transfer")
+                self._abort_write_card()
+            elif byte == self.CTRL_ENQ:
+                self._write_card_chunk_has_enq = True
+                self._write_card_chunk_buffer = bytearray()
+                self._write_card_chunk_checksum_buf = bytearray()
+                self._write_card_data_substate = self._CARD_CHUNK_WAIT_SIZE
+            else:
+                # Chunk starts directly with size byte (missing CTRL_ENQ) — will be NAK'd
+                self._write_card_chunk_has_enq = False
+                self._write_card_chunk_size = byte
+                self._write_card_chunk_buffer = bytearray()
+                self._write_card_chunk_checksum_buf = bytearray()
+                self._write_card_data_substate = (
+                    self._CARD_CHUNK_SIZE_REPEAT if byte == 0 else self._CARD_CHUNK_PAYLOAD
+                )
+            return b""
+
+        if sub == self._CARD_CHUNK_WAIT_SIZE:
+            if byte == self.CTRL_EOT:
+                logger.info("Write Card: CTRL_EOT during chunk size byte - aborting")
+                self._abort_write_card()
+                return b""
+            self._write_card_chunk_size = byte
+            self._write_card_data_substate = (
+                self._CARD_CHUNK_SIZE_REPEAT if byte == 0 else self._CARD_CHUNK_PAYLOAD
+            )
+            return b""
+
+        if sub == self._CARD_CHUNK_PAYLOAD:
+            # Any byte value is valid payload — do NOT special-case control chars here.
+            self._write_card_chunk_buffer.append(byte)
+            if len(self._write_card_chunk_buffer) == self._write_card_chunk_size:
+                self._write_card_data_substate = self._CARD_CHUNK_SIZE_REPEAT
+            return b""
+
+        if sub == self._CARD_CHUNK_SIZE_REPEAT:
+            self._write_card_chunk_size_repeat = byte
+            self._write_card_data_substate = self._CARD_CHUNK_ETB
+            return b""
+
+        if sub == self._CARD_CHUNK_ETB:
+            if byte != self.CTRL_ETB:
+                logger.warning(
+                    f"Write Card: expected CTRL_ETB in chunk, got 0x{byte:02X} - NAK, reset chunk"
+                )
+                self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
+                return bytes([self.CTRL_NAK])
+            self._write_card_data_substate = self._CARD_CHUNK_CHECKSUM
+            return b""
+
+        if sub == self._CARD_CHUNK_CHECKSUM:
+            self._write_card_chunk_checksum_buf.append(byte)
+            if len(self._write_card_chunk_checksum_buf) == 2:
+                return self._process_card_chunk()
+
+        return b""
+
+    def _process_card_chunk(self) -> bytes:
+        """Validate the completed chunk; ACK if valid, NAK and reset chunk if not.
+
+        Validation rules (any failure → NAK, sub-state resets to WAIT_START for retransmit):
+          1. Repeated size byte must match the original size byte.
+          2. 16-bit big-endian sum of payload bytes must match the 2-byte checksum.
+          3. Chunk must have started with CTRL_ENQ; if not, all other checks may pass
+             but the chunk is still NAK'd (spec: discard and wait for retransmit).
+
+        On ACK: if total accumulated bytes reach the expected transfer size, the card
+        slot is committed and the write-card state machine is reset to idle.
+        """
+        payload = self._write_card_chunk_buffer
+        size    = self._write_card_chunk_size
+        has_enq = self._write_card_chunk_has_enq
+        cs_buf  = self._write_card_chunk_checksum_buf
+
+        # Always reset sub-state — ready for next chunk or retransmit.
+        self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
+
+        if self._write_card_chunk_size_repeat != size:
+            logger.warning(
+                f"Write Card: chunk size repeat mismatch "
+                f"(hdr={size}, repeat={self._write_card_chunk_size_repeat}) - NAK"
+            )
+            return bytes([self.CTRL_NAK])
+
+        # 16-bit big-endian sum of payload bytes
+        calculated = sum(payload) & 0xFFFF
+        received   = (cs_buf[0] << 8) | cs_buf[1]
+        if calculated != received:
+            logger.warning(
+                f"Write Card: chunk checksum mismatch "
+                f"(calc 0x{calculated:04X}, recv 0x{received:04X}) - NAK"
+            )
+            return bytes([self.CTRL_NAK])
+
+        if not has_enq:
+            logger.warning("Write Card: chunk missing leading CTRL_ENQ - NAK")
+            return bytes([self.CTRL_NAK])
+
+        # Valid chunk — accumulate
+        self._write_card_data_accumulated.extend(payload)
+        total_expected = (
+            self._write_card_filename_len
+            + self._write_card_preview_size
+            + self._write_card_pattern_size
+        )
+        total_received = len(self._write_card_data_accumulated)
+        logger.debug(
+            f"Write Card: chunk OK ({len(payload)} B), total {total_received}/{total_expected}"
+        )
+
+        if total_received >= total_expected:
+            self._commit_write_card()
+
+        return bytes([self.CTRL_ACK])
+
+    def _commit_write_card(self) -> None:
+        """Decode accumulated card payload and store it in the appropriate card space.
+
+        Payload layout (lengths from the KN header):
+          [0 : fn_len]                    → filename bytes (incl. null terminator)
+          [fn_len : fn_len+prev_size]     → preview image (raw bytes)
+          [fn_len+prev_size : ...+pat_sz] → stitch pattern (raw bytes)
+
+        All three fields are stored as lowercase hex strings in the CardMemorySlot.
+        Pattern parsing is deferred — the on-card binary stitch format is not yet known;
+        pattern_xy / pattern_bytes will be empty until proper parsing is added.
+        """
+        import datetime
+        from machine_state import CardMemorySlot
+
+        data     = bytes(self._write_card_data_accumulated)
+        fn_len   = self._write_card_filename_len
+        prev_sz  = self._write_card_preview_size
+        pat_sz   = self._write_card_pattern_size
+
+        filename_bytes = data[:fn_len]
+        preview_bytes  = data[fn_len : fn_len + prev_sz]
+        pattern_bytes  = data[fn_len + prev_sz : fn_len + prev_sz + pat_sz]
+
+        try:
+            filename = filename_bytes.rstrip(b'\x00').decode('latin-1', errors='replace')
+        except Exception:
+            filename = ""
+
+        slot = CardMemorySlot(
+            slot_id      = self._write_card_slot_id,
+            pattern_type = self._write_card_stitch_type,
+            header_raw   = self._write_card_header_raw.hex(),
+            preview_raw  = preview_bytes.hex(),
+            pattern_raw  = pattern_bytes.hex(),
+            filename     = filename,
+        )
+        slot.parse_pattern_data()  # no-op for hex-encoded raw binary; safe to call
+
+        if self.machine_state is not None:
+            if self._write_card_stitch_type == "9mm":
+                self.machine_state.card_9mm.set_slot(slot)
+            elif self._write_card_stitch_type == "MAXI":
+                self.machine_state.card_maxi.set_slot(slot)
+            else:
+                self.machine_state.card_embroidery.set_slot(slot)
+
+        logger.info(
+            f"Write Card: committed {self._write_card_stitch_type} slot {self._write_card_slot_id} "
+            f"(filename={filename!r}, preview={prev_sz} B, pattern={pat_sz} B)"
+        )
+        self._abort_write_card()
 
     def _handle_list_pmemory_75xx(self) -> bytes:
         """List P-Memory handler for PFAFF Creative 7570 and 7550.
@@ -767,6 +1224,184 @@ class PFAFFProtocol:
         self._read_data = bytearray()
         self._read_offset = 0
         self._read_last_chunk_sent = False
+
+    def _abort_read_kb(self) -> None:
+        """Abort an in-progress KB card-preview read and return to idle state."""
+        self._state = self._STATE_IDLE
+        self._kb_params_buffer = bytearray()
+        self._kb_preview_data = bytearray()
+        self._kb_preview_offset = 0
+
+    def _handle_read_card_preview(self) -> bytes:
+        """Handle KB command: read preview image from a card memory slot.
+
+        Parameter bytes layout (8 raw bytes):
+          [0-3]  fixed: 00 00 10 02
+          [4]    BANK: 0xC0 = 9mm/Embroidery, 0xD0 = MAXI
+          [5]    SLOT: raw slot byte (Embroidery adds 0xC8 offset, so 0xC8=slot0, 0xC9=slot1)
+          [6]    TYPE: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
+          [7]    fixed: 00
+
+        First response chunk:
+          CTRL_ACK | 00 00 00 00 | <pattern_size 2 bytes BE> | <fn_len_byte>
+          | <filename+NUL> | <chunk_size> | <preview_bytes> | <chunk_size> | CTRL_ETB
+          | <checksum 2 bytes BE (sum of preview payload)>
+
+        Subsequent chunks (sent after each ACK while preview remains):
+          CTRL_ENQ | <chunk_size> | <preview_bytes> | <chunk_size> | CTRL_ETB
+          | <checksum 2 bytes BE>
+
+        After the final ACK (all preview bytes sent): respond with CTRL_ETX.
+        """
+        params = self._kb_params_buffer
+        type_byte = params[6]
+        slot_raw  = params[5]
+
+        if type_byte == 0x01:
+            stitch_type = "9mm"
+            space = self.machine_state.card_9mm if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x02:
+            stitch_type = "MAXI"
+            space = self.machine_state.card_maxi if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x03:
+            stitch_type = "Embroidery"
+            space = self.machine_state.card_embroidery if self.machine_state else None
+            slot_id = slot_raw - 0xC8
+        else:
+            logger.warning(f"KB: unknown type byte 0x{type_byte:02X} - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        if self.machine_state is None:
+            logger.warning("KB: no machine state available - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        slot = space.get_slot(slot_id)
+        if slot is None:
+            logger.warning(f"KB: {stitch_type} slot {slot_id} not found - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        try:
+            preview_bytes = bytes.fromhex(slot.preview_raw) if slot.preview_raw else b""
+        except ValueError:
+            logger.warning(f"KB: invalid preview_raw hex in {stitch_type} slot {slot_id} - using empty")
+            preview_bytes = b""
+
+        try:
+            pattern_size = len(bytes.fromhex(slot.pattern_raw)) if slot.pattern_raw else 0
+        except ValueError:
+            pattern_size = 0
+
+        filename_bytes = slot.filename.encode('ascii', errors='replace') + b'\x00'
+        fn_len_byte = len(filename_bytes)  # length including null terminator
+
+        self._kb_preview_data = bytearray(preview_bytes)
+        self._kb_preview_offset = 0
+
+        chunk_size = min(0x80, len(self._kb_preview_data))
+        chunk_data = bytes(self._kb_preview_data[:chunk_size])
+        self._kb_preview_offset = chunk_size
+
+        checksum = sum(chunk_data) & 0xFFFF
+
+        response = bytearray()
+        response.append(self.CTRL_ACK)
+        response.extend([0x00, 0x00, 0x00, 0x00])
+        response.append((pattern_size >> 8) & 0xFF)
+        response.append(pattern_size & 0xFF)
+        response.append(fn_len_byte)
+        response.extend(filename_bytes)
+        response.append(chunk_size)
+        response.extend(chunk_data)
+        response.append(chunk_size)
+        response.append(self.CTRL_ETB)
+        response.append((checksum >> 8) & 0xFF)
+        response.append(checksum & 0xFF)
+
+        self._state = self._STATE_READ_KB_WAIT_ACK
+        logger.info(
+            f"KB: {stitch_type} slot {slot_id}, preview={len(self._kb_preview_data)} B, "
+            f"pattern={pattern_size} B, filename={slot.filename!r} - sending first chunk ({chunk_size} B)"
+        )
+        return bytes(response)
+
+    def _send_next_kb_chunk(self) -> bytes:
+        """Build and return the next KB preview chunk (starts with CTRL_ENQ)."""
+        remaining = len(self._kb_preview_data) - self._kb_preview_offset
+        chunk_size = min(0x80, remaining)
+        chunk_data = bytes(
+            self._kb_preview_data[self._kb_preview_offset : self._kb_preview_offset + chunk_size]
+        )
+        self._kb_preview_offset += chunk_size
+
+        checksum = sum(chunk_data) & 0xFFFF
+
+        response = bytearray()
+        response.append(self.CTRL_ENQ)
+        response.append(chunk_size)
+        response.extend(chunk_data)
+        response.append(chunk_size)
+        response.append(self.CTRL_ETB)
+        response.append((checksum >> 8) & 0xFF)
+        response.append(checksum & 0xFF)
+
+        self._state = self._STATE_READ_KB_WAIT_ACK
+        logger.debug(
+            f"KB preview: chunk {chunk_size} B, "
+            f"offset {self._kb_preview_offset}/{len(self._kb_preview_data)}"
+        )
+        return bytes(response)
+
+    def _handle_delete_card_slot(self) -> bytes:
+        """Handle KL command: delete a slot from card memory.
+
+        Parameter bytes layout (7 raw bytes):
+          [0-3]  fixed: 00 00 10 02
+          [4]    BANK: 0xC0 = 9mm/Embroidery, 0xD0 = MAXI
+          [5]    SLOT: raw slot byte (Embroidery adds 0xC8 offset, so 0xC8=slot0, 0xC9=slot1)
+          [6]    TYPE: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
+
+        Response: CTRL_ACK on success, CTRL_NAK on error.
+        """
+        params = self._kl_params_buffer
+        type_byte = params[6]
+        slot_raw  = params[5]
+
+        if type_byte == 0x01:
+            stitch_type = "9mm"
+            space = self.machine_state.card_9mm if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x02:
+            stitch_type = "MAXI"
+            space = self.machine_state.card_maxi if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x03:
+            stitch_type = "Embroidery"
+            space = self.machine_state.card_embroidery if self.machine_state else None
+            slot_id = slot_raw - 0xC8
+        else:
+            logger.warning(f"KL: unknown type byte 0x{type_byte:02X} - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        if self.machine_state is None:
+            logger.warning("KL: no machine state available - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        if space.get_slot(slot_id) is None:
+            logger.warning(f"KL: {stitch_type} slot {slot_id} not found - NAK")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        space.delete_slot(slot_id)
+        logger.info(f"KL: deleted {stitch_type} slot {slot_id}")
+        self._state = self._STATE_IDLE
+        return bytes([self.CTRL_ACK])
 
     def handle_read_pmemory_init(self, params: str) -> bytes:
         """Handle 'RM<5 chars>' + CTRL_ETX (Read P-Memory) command.
