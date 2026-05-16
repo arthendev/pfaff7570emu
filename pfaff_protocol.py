@@ -45,6 +45,7 @@ class PFAFFProtocol:
     CMD_WRITE_CARD = "KN"
     CMD_READ_CARD_PREVIEW = "KB"
     CMD_DELETE_CARD = "KL"
+    CMD_READ_CARD_SLOT = "KS"
 
     # Internal state machine states
     _STATE_IDLE = 0
@@ -62,6 +63,9 @@ class PFAFFProtocol:
     _STATE_READ_KL_WAIT_ETX = 13  # after 7 KL params, waiting for CTRL_ETX terminator
     _STATE_RAW_CMD_MNEMONIC = 14     # received CTRL_ETX in idle, expecting 2-byte raw command mnemonic
     _STATE_WRITE_CARD_WAIT_ETX = 15  # collected 30 KN header bytes, waiting for CTRL_ETX terminator
+    _STATE_READ_KS_PARAMS = 16    # collecting 7 raw parameter bytes for KS command
+    _STATE_READ_KS_WAIT_ETX = 17  # after 7 KS params, waiting for CTRL_ETX terminator
+    _STATE_READ_KS_WAIT_ACK = 18  # waiting for CTRL_ACK after a KS chunk
 
     # Card data chunk sub-states (used when _state == _STATE_WRITE_CARD_DATA)
     _CARD_CHUNK_WAIT_START  = 0  # waiting for CTRL_ENQ (or bare size byte)
@@ -131,6 +135,11 @@ class PFAFFProtocol:
         self._kb_params_buffer = bytearray()
         self._kb_preview_data = bytearray()
         self._kb_preview_offset = 0
+
+        # Read Card Slot (KS) state machine
+        self._ks_params_buffer = bytearray()
+        self._ks_pattern_data = bytearray()
+        self._ks_offset = 0
 
         # Delete Card Slot (KL) state machine
         self._kl_params_buffer = bytearray()
@@ -288,6 +297,39 @@ class PFAFFProtocol:
                 else:
                     logger.warning(f"KB preview: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
 
+            elif self._state == self._STATE_READ_KS_PARAMS:
+                # Accept any byte value (including control characters) as raw parameter
+                self._ks_params_buffer.append(byte)
+                if len(self._ks_params_buffer) == 7:
+                    self._state = self._STATE_READ_KS_WAIT_ETX
+
+            elif self._state == self._STATE_READ_KS_WAIT_ETX:
+                if byte == self.CTRL_ETX:
+                    response.extend(self._handle_read_card_slot())
+                elif byte == self.CTRL_EOT:
+                    logger.info("KS: EOT received waiting for ETX - resetting to idle")
+                    self._state = self._STATE_IDLE
+                    self._ks_params_buffer = bytearray()
+                else:
+                    logger.warning(f"KS: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+
+            elif self._state == self._STATE_READ_KS_WAIT_ACK:
+                if byte == self.CTRL_EOT:
+                    logger.info("KS: EOT received - aborting transfer")
+                    self._abort_read_ks()
+                elif byte == self.CTRL_ACK:
+                    if self._ks_offset >= len(self._ks_pattern_data):
+                        logger.info("KS: transfer complete, sending CTRL_ETX")
+                        self._abort_read_ks()
+                        response.append(self.CTRL_ETX)
+                    else:
+                        response.extend(self._send_next_ks_chunk())
+                elif byte == self.CTRL_NAK:
+                    logger.warning("KS: NAK received - aborting transfer")
+                    self._abort_read_ks()
+                else:
+                    logger.warning(f"KS: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
+
             elif self._state == self._STATE_READ_KL_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
                 self._kl_params_buffer.append(byte)
@@ -338,6 +380,9 @@ class PFAFFProtocol:
                         elif mnemonic == self.CMD_READ_CARD_PREVIEW:
                             self._kb_params_buffer = bytearray()
                             self._state = self._STATE_READ_KB_PARAMS
+                        elif mnemonic == self.CMD_READ_CARD_SLOT:
+                            self._ks_params_buffer = bytearray()
+                            self._state = self._STATE_READ_KS_PARAMS
                         elif mnemonic == self.CMD_DELETE_CARD:
                             self._kl_params_buffer = bytearray()
                             self._state = self._STATE_READ_KL_PARAMS
@@ -1387,6 +1432,101 @@ class PFAFFProtocol:
             f"offset {self._kb_preview_offset}/{len(self._kb_preview_data)}"
         )
         return bytes(response)
+
+    def _handle_read_card_slot(self) -> bytes:
+        """Handle KS command: send pattern data from a card slot in chunked raw format.
+
+        First chunk starts with CTRL_ACK then 00 00 00 00, then size, payload, size, CTRL_ETB, checksum.
+        Subsequent chunks start with CTRL_ENQ then size, payload, size, CTRL_ETB, checksum.
+        """
+        params = self._ks_params_buffer
+        type_byte = params[6]
+        slot_raw = params[5]
+
+        if type_byte == 0x01:
+            stitch_type = "9mm"
+            space = self.machine_state.card_9mm if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x02:
+            stitch_type = "MAXI"
+            space = self.machine_state.card_maxi if self.machine_state else None
+            slot_id = slot_raw
+        elif type_byte == 0x03:
+            stitch_type = "Embroidery"
+            space = self.machine_state.card_embroidery if self.machine_state else None
+            slot_id = slot_raw - 0xC8
+        else:
+            logger.warning(f"KS: unknown type byte 0x{type_byte:02X}")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        if self.machine_state is None:
+            logger.warning("KS: no machine state available")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        slot = space.get_slot(slot_id)
+        if slot is None:
+            logger.warning(f"KS: {stitch_type} slot {slot_id} not found")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
+
+        try:
+            pattern_bytes = bytes.fromhex(slot.pattern_raw) if slot.pattern_raw else b""
+        except ValueError:
+            logger.warning(f"KS: invalid pattern_raw hex in {stitch_type} slot {slot_id} - using empty")
+            pattern_bytes = b""
+
+        self._ks_pattern_data = bytearray(pattern_bytes)
+        self._ks_offset = 0
+
+        # Build first chunk: CTRL_ACK + 00 00 00 00 + <size> + <payload> + <size> + CTRL_ETB + checksum(ascii)
+        chunk_size = min(0x80, len(self._ks_pattern_data) - self._ks_offset)
+        chunk_data = bytes(self._ks_pattern_data[:chunk_size])
+        self._ks_offset = chunk_size
+
+        response = bytearray()
+        response.append(self.CTRL_ACK)
+        response.extend([0x00, 0x00, 0x00, 0x00])
+        response.append(chunk_size)
+        response.extend(chunk_data)
+        response.append(chunk_size)
+        checksum = self._calculate_checksum(bytes([chunk_size]) + chunk_data + bytes([chunk_size]))
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+
+        self._state = self._STATE_READ_KS_WAIT_ACK
+        logger.info(
+            f"KS: {stitch_type} slot {slot_id}, pattern={len(self._ks_pattern_data)} B - sending first chunk ({chunk_size} B)"
+        )
+        return bytes(response)
+
+    def _send_next_ks_chunk(self) -> bytes:
+        """Build and return the next KS pattern chunk (starts with CTRL_ENQ)."""
+        remaining = len(self._ks_pattern_data) - self._ks_offset
+        chunk_size = min(0x80, remaining)
+        chunk_data = bytes(self._ks_pattern_data[self._ks_offset : self._ks_offset + chunk_size])
+        self._ks_offset += chunk_size
+
+        response = bytearray()
+        response.append(self.CTRL_ENQ)
+        response.append(chunk_size)
+        response.extend(chunk_data)
+        response.append(chunk_size)
+        checksum = self._calculate_checksum(response)
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+
+        self._state = self._STATE_READ_KS_WAIT_ACK
+        logger.debug(f"KS chunk {chunk_size} B, offset {self._ks_offset}/{len(self._ks_pattern_data)}")
+        return bytes(response)
+
+    def _abort_read_ks(self) -> None:
+        """Abort an in-progress KS read and return to idle state."""
+        self._state = self._STATE_IDLE
+        self._ks_params_buffer = bytearray()
+        self._ks_pattern_data = bytearray()
+        self._ks_offset = 0
 
     def _handle_delete_card_slot(self) -> bytes:
         """Handle KL command: delete a slot from card memory.
