@@ -296,13 +296,8 @@ class CardSlotDetailWindow(QDialog):
 
     def _populate_header_grid(self):
         """Placeholder: populate header grid. Keep behavior similar to P-Memory window for now."""
-        # For card slots, header decoding will differ; reuse the 75xx population as a
-        # sensible default until the user provides decoding rules.
         try:
-            if self._machine_model == "PFAFF Creative 1475 CD":
-                return self._populate_header_grid_1475cd()
-            else:
-                return self._populate_header_grid_75xx()
+            return self._populate_header_grid_75xx()
         except Exception:
             # If slot doesn't provide expected stats, just clear the grid
             while self._header_grid.count():
@@ -324,12 +319,39 @@ class CardSlotDetailWindow(QDialog):
         except Exception:
             stats = {}
 
-        if getattr(self.slot, 'pattern_type', None) == "9mm":
-            mapping = {0: ("y_min", "min(ys)"), 1: ("y_max", "max(ys)"), 2: ("dx_abs_max", "max(abs(dxs))"), 5: (None, "Unknown"), 6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"), 8: ("pn_x", "xs[end]"), 10: ("span_x", "max(xs) - min(xs)"), 12: ("y_min_to_bound", "0x36 - min(ys)"), 14: ("span_y", "max(ys) - min(ys)")}
+        if getattr(self.slot, 'pattern_type', None) in ("9mm", "MAXI"):
+            mapping = {
+                2: ("fix_0x10", "Fixed byte?"),               # DONE
+                3: ("fix_0x02", "Fixed byte?"),               # DONE
+                4: ("bank", "Bank number?"),                  # DONE
+                5: ("slot_no", "Slot number"),                # DONE
+                6: ("type", "Pattern type"),                  # DONE
+                9: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
+                11: ("pn_x", "xs[end]"),                      # DONE
+                13: ("span_x", "max(xs) - min(xs)"),          # DONE
+                15: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
+                17: ("span_y", "max(ys) - min(ys)"),          # DONE
+                19: (None, "Unknown"),                        # DONE (scaling)
+                22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
+                24: ("size_preview", "size(preview_image)"),  # DONE
+                26: (None, "Unknown"),                        # DONE (uknown)
+                27: ("size_pattern", "size(pattern_raw)"),    # DONE
+                29: ("size_name", "size(filename)"),          # DONE
+            }
         else:
-            mapping = {0: ("y_min_norm", "min(ys)"), 1: ("y_max_norm_div_2", "max(ys)//2"), 2: ("dx_abs_max", "max(abs(dxs))"), 5: (None, "Unknown"), 6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"), 8: ("pn_x", "xs[end]"), 10: ("span_x", "max(xs) - min(xs)"), 12: ("y_min_to_bound", "0x36 - min(ys)"), 14: ("span_y", "max(ys) - min(ys)"), 16: ("dy_0n", "ys[end] - ys[0]")}
+            mapping = {
+                2: ("fix_0x10", "Fixed byte?"),               # DONE
+                3: ("fix_0x02", "Fixed byte?"),               # DONE
+                4: ("bank", "Bank number?"),                  # DONE
+                5: ("slot_no", "Slot number"),                # DONE
+                6: ("type", "Pattern type"),                  # DONE
+                24: ("size_preview", "size(preview_image)"),  # DONE
+                26: (None, "Unknown"),                        # DONE (uknown)
+                27: ("size_pattern", "size(pattern_raw)"),    # DONE
+                29: ("size_name", "size(filename)"),          # DONE
+            }
 
-        two_byte_pairs = {6: 7, 8: 9, 10: 11, 12: 13, 14: 15, 16: 17}
+        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 22: 23, 24: 25, 27:28}
         skip_indices = set(two_byte_pairs.values())
 
         mono = QFont("Courier New", 9)
@@ -444,95 +466,6 @@ class CardSlotDetailWindow(QDialog):
 
         self._header_grid.addItem(
             QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), grid_row, 0, 1, 7)
-
-    def _populate_header_grid_1475cd(self):
-        """Populate the header byte analysis grid for PFAFF Creative 1475 CD.
-
-        Kept for parity with slot_detail_window; card decoding may override this later.
-        """
-        while self._header_grid.count():
-            item = self._header_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        header_bytes = self._get_header_bytes()
-        try:
-            stats = self.slot.get_pattern_stats()
-        except Exception:
-            stats = {}
-
-        if getattr(self.slot, 'pattern_type', None) == "9mm":
-            mapping = {0: ("y_min",      "min(ys)"), 1: ("y_max",      "max(ys)"), 2: ("dx_abs_max", "max(abs(dxs))"), 3: (None,         "Unknown"),}
-        else:
-            mapping = {0: ("y_min_norm", "min(ys)"), 1: ("y_max_norm", "max(ys)"), 2: (None,         "Unknown"), 3: (None,         "Unknown"),}
-
-        mono = QFont("Courier New", 9)
-        bold_font = QFont()
-        bold_font.setBold(True)
-
-        # Header row
-        for col, text in enumerate(("Byte", "Hex", "Dec", "Stat hex", "Stat dec", "Stat name", "OK/NOK")):
-            hdr = QLabel(text)
-            hdr.setFont(bold_font)
-            self._header_grid.addWidget(hdr, 0, col)
-
-        for grid_row, idx in enumerate(range(4), start=1):
-            h_byte = header_bytes[idx] if idx < len(header_bytes) else None
-            byte_label = f"H[{idx}]"
-            stat_key, stat_label = mapping.get(idx, (None, ""))
-            stat_val_raw = stats.get(stat_key) if stat_key else None
-
-            idx_lbl = QLabel(byte_label)
-            idx_lbl.setFont(mono)
-            if stat_label:
-                idx_lbl.setToolTip(stat_label)
-            self._header_grid.addWidget(idx_lbl, grid_row, 0)
-
-            hex_lbl = QLabel(f"0x{h_byte:02X}" if h_byte is not None else "--")
-            hex_lbl.setFont(mono)
-            self._header_grid.addWidget(hex_lbl, grid_row, 1)
-
-            dec_lbl = QLabel(str(h_byte) if h_byte is not None else "--")
-            dec_lbl.setFont(mono)
-            self._header_grid.addWidget(dec_lbl, grid_row, 2)
-
-            if stat_key and stat_val_raw is not None:
-                stat_hex_lbl = QLabel(f"0x{stat_val_raw & 0xFF:02X}")
-                stat_dec_lbl = QLabel(str(stat_val_raw))
-            else:
-                stat_hex_lbl = QLabel("--")
-                stat_dec_lbl = QLabel("--")
-            stat_hex_lbl.setFont(mono)
-            stat_dec_lbl.setFont(mono)
-            self._header_grid.addWidget(stat_hex_lbl, grid_row, 3)
-            self._header_grid.addWidget(stat_dec_lbl, grid_row, 4)
-
-            name_lbl = QLabel(stat_key or "")
-            name_lbl.setFont(mono)
-            self._header_grid.addWidget(name_lbl, grid_row, 5)
-
-            status_lbl = QLabel()
-            status_lbl.setFont(bold_font)
-            if stat_key and stat_val_raw is not None and h_byte is not None:
-                if h_byte == (stat_val_raw & 0xFF):
-                    status_lbl.setText("OK")
-                    status_lbl.setStyleSheet("color: green;")
-                else:
-                    status_lbl.setText("NOK")
-                    status_lbl.setStyleSheet("color: red;")
-            elif stat_key is None and h_byte is not None:
-                if h_byte == 0:
-                    status_lbl.setText("OK")
-                    status_lbl.setStyleSheet("color: green;")
-                else:
-                    status_lbl.setText("NOK")
-                    status_lbl.setStyleSheet("color: red;")
-            else:
-                status_lbl.setText("--")
-            self._header_grid.addWidget(status_lbl, grid_row, 6)
-
-        self._header_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), 5, 0, 1, 7)
 
     def _populate_pattern_grid(self):
         """Fill the Pattern tab with all pattern statistics."""
@@ -842,8 +775,8 @@ class CardSlotDetailWindow(QDialog):
         self._header_edit_2.setPlainText(formatted_header)
         self._pattern_edit.setPlainText(
             self._format_pattern_raw(getattr(self.slot, 'pattern_raw', ''), getattr(self.slot, 'pattern_type', '')))
-        # preview_image is a new raw field for card slots
-        self._preview_image_edit.setPlainText(getattr(self.slot, 'preview_image', ''))
+        # preview_raw is the raw preview field for card slots
+        self._preview_image_edit.setPlainText(getattr(self.slot, 'preview_raw', ''))
 
     def refresh(self):
         """Re-read from the slot and update all displayed fields."""
@@ -855,7 +788,7 @@ class CardSlotDetailWindow(QDialog):
             self.slot.clear()
         except Exception:
             # If slot doesn't implement clear(), try to reset common fields
-            for attr in ('header_raw', 'pattern_raw', 'pattern_xy', 'pattern_xyt', 'pattern_xytacc', 'preview_image'):
+            for attr in ('header_raw', 'pattern_raw', 'pattern_xy', 'pattern_xyt', 'pattern_xytacc', 'preview_raw'):
                 if hasattr(self.slot, attr):
                     try:
                         setattr(self.slot, attr, '' if isinstance(getattr(self.slot, attr), str) else [])
