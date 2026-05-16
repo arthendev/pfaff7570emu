@@ -326,12 +326,12 @@ class CardSlotDetailWindow(QDialog):
                 4: ("bank", "Bank number?"),                  # DONE
                 5: ("slot_no", "Slot number"),                # DONE
                 6: ("type", "Pattern type"),                  # DONE
-                9: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
-                11: ("pn_x", "xs[end]"),                      # DONE
-                13: ("span_x", "max(xs) - min(xs)"),          # DONE
-                15: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
-                17: ("span_y", "max(ys) - min(ys)"),          # DONE
-                19: (None, "Unknown"),                        # DONE (scaling)
+                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
+                9: ("pn_x", "xs[end]"),                       # DONE
+                11: ("span_x", "max(xs) - min(xs)"),          # DONE
+                13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
+                15: ("span_y", "max(ys) - min(ys)"),          # DONE
+                17: (None, "Unknown"),                        # DONE (scaling)
                 22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
                 26: (None, "Unknown"),                        # DONE (uknown)
@@ -722,6 +722,16 @@ class CardSlotDetailWindow(QDialog):
         self._type_label.setText(f"    Type:  {getattr(self.slot, 'pattern_type', '')}")
         self._bytes_label.setText(f"    Bytes:  {getattr(self.slot, 'get_size_bytes', lambda: 'N/A')()}" )
         self._stitches_label.setText(f"    Stitches:  {getattr(self.slot, 'get_size_stitches', lambda: 'N/A')()}" )
+        # Ensure pattern_xy is available for preview: decode 9mm patterns when needed
+        if getattr(self.slot, 'pattern_type', '') == "9mm":
+            existing = list(getattr(self.slot, 'pattern_xy', []))
+            if not existing:
+                try:
+                    decoded = self._decode_pattern_9mm(getattr(self.slot, 'pattern_raw', ''))
+                    # store back on the slot for persistence
+                    setattr(self.slot, 'pattern_xy', decoded)
+                except Exception:
+                    pass
         self._preview.pattern_xy = list(getattr(self.slot, 'pattern_xy', []))
         self._preview.pattern_type = getattr(self.slot, 'pattern_type', "")
         self._preview.update()
@@ -735,31 +745,155 @@ class CardSlotDetailWindow(QDialog):
     def _format_header_raw(self, raw: str) -> str:
         if not self._logical_split_cb.isChecked() or not raw:
             return raw
-        return ' '.join(raw[i:i+2] for i in range(0, len(raw), 2))
+
+        # Split into byte strings (2 hex chars each)
+        raw = raw.strip()
+        bytes_list = [raw[i:i+2] for i in range(0, len(raw), 2) if raw[i:i+2]]
+        if not bytes_list:
+            return raw
+
+        # Header two-byte grouping as used in header analysis
+        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 22: 23, 24: 25, 27: 28}
+        skip_indices = set(two_byte_pairs.values())
+
+        parts = []
+        i = 0
+        while i < len(bytes_list):
+            if i in skip_indices:
+                # this index is the low byte of a pair already handled
+                i += 1
+                continue
+
+            if i in two_byte_pairs:
+                j = two_byte_pairs[i]
+                hi = bytes_list[i] if i < len(bytes_list) else ''
+                lo = bytes_list[j] if j < len(bytes_list) else ''
+                if hi and lo:
+                    parts.append(hi + lo)  # join without space
+                elif hi:
+                    parts.append(hi)
+                elif lo:
+                    parts.append(lo)
+                i = j + 1
+            else:
+                parts.append(bytes_list[i])
+                i += 1
+
+        return ' '.join(parts)
 
     def _format_pattern_raw(self, raw: str, pattern_type: str) -> str:
+        # Show grouped bytes per user rules when logical split enabled.
         if not self._logical_split_cb.isChecked() or not raw:
             return raw
-        lines = []
-        i = 0
-        if pattern_type == "9mm":
-            group = 5
-            while i < len(raw):
-                a = raw[i:i+3]
-                b = raw[i+3:i+5]
-                line = a + (' ' + b if b else '')
-                lines.append(line)
-                i += group
-        else:
-            group = 7
-            while i < len(raw):
-                a = raw[i:i+3]
-                b = raw[i+3:i+5]
-                c = raw[i+5:i+7]
-                line = a + (' ' + b if b else '') + (' ' + c if c else '')
-                lines.append(line)
-                i += group
-        return '\n'.join(lines)
+
+        # Split raw hex string into byte strings (2 chars each). Keep original casing.
+        raw = raw.strip()
+        bytes_list = [raw[i:i+2] for i in range(0, len(raw), 2) if raw[i:i+2]]
+        if not bytes_list:
+            return raw
+
+        # Detect special single-byte markers (0x80, 0x8A) in a case-insensitive way.
+        specials = {"80", "8a"}
+        bytes_lower = [b.lower() for b in bytes_list]
+        start_special = bytes_lower[0] in specials
+        end_special = bytes_lower[-1] in specials
+
+        rows = []
+        idx = 0
+
+        # If first byte is special, emit it as its own row.
+        if start_special:
+            rows.append(bytes_list[0])
+            idx = 1
+
+        # Choose grouping: 9mm -> 2 bytes per row, MAXI -> 3 bytes per row
+        group = 2 if pattern_type == "9mm" else 3
+
+        # Determine body limit: if last byte is special, leave it for the final row
+        body_limit = len(bytes_list) - 1 if end_special else len(bytes_list)
+
+        # Group the middle bytes
+        while idx < body_limit:
+            group_bytes = bytes_list[idx: idx + group]
+            if not group_bytes:
+                break
+            rows.append(' '.join(group_bytes))
+            idx += group
+
+        # If there are remaining bytes (including a trailing special), emit them as final row(s).
+        if idx < len(bytes_list):
+            # If exactly one remaining byte, append as single; otherwise join with spaces.
+            rem = bytes_list[idx:]
+            rows.append(' '.join(rem))
+
+        return '\n'.join(rows)
+
+    def _decode_pattern_9mm(self, raw: str) -> list:
+        """Decode 9mm pattern raw hex string into [x0,y0,x1,y1,...].
+
+        Rules:
+        - If first byte is 0x80 or 0x8A, skip it.
+        - If last byte is 0x80 or 0x8A, skip it.
+        - Remaining bytes are pairs: (dx_encoded, y_abs)
+          dx = dx_encoded - 0x5B
+          x(n) = x(n-1) - dx (start x(0)=0)
+        - After decoding, if any x < 0, shift all x by -min(x) so min(x) == 0.
+        """
+        if not raw:
+            return []
+        s = raw.strip()
+        # Build list of byte integers
+        bytes_list = []
+        for i in range(0, len(s), 2):
+            chunk = s[i:i+2]
+            if len(chunk) < 2:
+                break
+            try:
+                bytes_list.append(int(chunk, 16))
+            except ValueError:
+                # stop on invalid data
+                break
+
+        if not bytes_list:
+            return []
+
+        # Skip leading/trailing special markers
+        specials = {0x80, 0x8A}
+        start = 1 if bytes_list and bytes_list[0] in specials else 0
+        end = len(bytes_list) - 1 if bytes_list and bytes_list[-1] in specials else len(bytes_list)
+
+        body = bytes_list[start:end]
+        # Ensure even number of bytes (pairs)
+        if len(body) < 2:
+            return []
+        pair_count = len(body) // 2
+
+        xs = []
+        ys = []
+        prev_x = 0
+        for i in range(pair_count):
+            hi = body[i*2]
+            lo = body[i*2 + 1]
+            dx = hi - 0x5B
+            x = prev_x - dx
+            y = lo
+            xs.append(x)
+            ys.append(y)
+            prev_x = x
+
+        # If any x negative, shift all x so minimum becomes 0
+        if xs:
+            min_x = min(xs)
+            if min_x < 0:
+                shift = -min_x
+                xs = [x + shift for x in xs]
+
+        # Interleave into flat list
+        out = []
+        for x, y in zip(xs, ys):
+            out.append(int(x))
+            out.append(int(y))
+        return out
 
     def _on_show_canvas_changed(self):
         self._preview.show_canvas = self._show_canvas_cb.isChecked()
