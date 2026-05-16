@@ -321,18 +321,21 @@ class CardSlotDetailWindow(QDialog):
 
         if self.slot.pattern_type== "9mm":
             mapping = {
+                0: ("fix_0x00", "Fixed byte?"),               # DONE
+                1: ("fix_0x00", "Fixed byte?"),               # DONE
                 2: ("fix_0x10", "Fixed byte?"),               # DONE
                 3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("bank", "Bank number?"),                  # DONE
-                5: ("slot_no", "Slot number"),                # DONE
+                4: ("fix_0xC0", "Fixed byte?"),               # DONE
+                5: ("fix_0x00", "Fixed byte?"),               # DONE
                 6: ("type", "Pattern type"),                  # DONE
                 7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
                 9: ("pn_x", "xs[end]"),                       # DONE
                 11: ("span_x", "max(xs) - min(xs)"),          # DONE
                 13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
                 15: ("span_y", "max(ys) - min(ys)"),          # DONE
+                17: ("fix_0x00", "Unknown"),                  # DONE
                 19: (None, "Unknown"),                        # DONE (unknown/scaling)
-                20: ("y_min_abs", "abs(min(ys))"),            # DONE
+                20: ("fix_0x00", "Unknown"),                  # DONE
                 22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
                 26: ("fix_0x01", "Fixed byte?"),              # DONE
@@ -341,10 +344,12 @@ class CardSlotDetailWindow(QDialog):
             }
         elif self.slot.pattern_type== "MAXI":
             mapping = {
+                0: ("fix_0x00", "Fixed byte?"),               # DONE
+                1: ("fix_0x00", "Fixed byte?"),               # DONE
                 2: ("fix_0x10", "Fixed byte?"),               # DONE
                 3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("bank", "Bank number?"),                  # DONE
-                5: ("slot_no", "Slot number"),                # DONE
+                4: ("fix_0xC0", "Fixed byte?"),               # DONE
+                5: ("fix_0x00", "Fixed byte?"),               # DONE
                 6: ("type", "Pattern type"),                  # DONE
                 7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
                 9: ("pn_x", "xs[end]"),                       # DONE
@@ -362,10 +367,11 @@ class CardSlotDetailWindow(QDialog):
             }
         else:
             mapping = {
+                1: ("fix_0x00", "Fixed byte?"),               # DONE
                 2: ("fix_0x10", "Fixed byte?"),               # DONE
                 3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("bank", "Bank number?"),                  # DONE
-                5: ("slot_no", "Slot number"),                # DONE
+                4: ("fix_0xC0", "Fixed byte?"),               # DONE
+                5: ("fix_0x00", "Fixed byte?"),               # DONE
                 6: ("type", "Pattern type"),                  # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
                 26: ("fix_0x01", "Fixed byte?"),              # DONE
@@ -380,10 +386,10 @@ class CardSlotDetailWindow(QDialog):
         ptype = getattr(self.slot, 'pattern_type', '')
         type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Small hoop': 0x03, 'Large hoop': 0x03}
         card_expect = {
+            'fix_0x00': 0x00,
             'fix_0x10': 0x10,
             'fix_0x02': 0x02,
-            'bank': 0xC0,
-            'slot_no': int(getattr(self.slot, 'slot_id', 0)) if hasattr(self.slot, 'slot_id') else None,
+            'fix_0xC0': 0xC0,
             'type': type_map.get(ptype, None),
             'fix_0x01': 0x01,
         }
