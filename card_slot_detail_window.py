@@ -334,7 +334,7 @@ class CardSlotDetailWindow(QDialog):
                 17: (None, "Unknown"),                        # DONE (scaling)
                 22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
-                26: (None, "Unknown"),                        # DONE (uknown)
+                26: ("fix_0x01", "Fixed byte?"),              # DONE
                 27: ("size_pattern", "size(pattern_raw)"),    # DONE
                 29: ("size_name", "size(filename)"),          # DONE
             }
@@ -346,13 +346,25 @@ class CardSlotDetailWindow(QDialog):
                 5: ("slot_no", "Slot number"),                # DONE
                 6: ("type", "Pattern type"),                  # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
-                26: (None, "Unknown"),                        # DONE (uknown)
+                26: ("fix_0x01", "Fixed byte?"),              # DONE
                 27: ("size_pattern", "size(pattern_raw)"),    # DONE
                 29: ("size_name", "size(filename)"),          # DONE
             }
 
         two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 22: 23, 24: 25, 27:28}
         skip_indices = set(two_byte_pairs.values())
+
+        # Prepare card-specific expected value callables for header bytes
+        ptype = getattr(self.slot, 'pattern_type', '')
+        type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Small hoop': 0x03, 'Large hoop': 0x03}
+        card_expect = {
+            'fix_0x10': 0x10,
+            'fix_0x02': 0x02,
+            'bank': 0xC0,
+            'slot_no': int(getattr(self.slot, 'slot_id', 0)) if hasattr(self.slot, 'slot_id') else None,
+            'type': type_map.get(ptype, None),
+            'fix_0x01': 0x01,
+        }
 
         mono = QFont("Courier New", 9)
         bold_font = QFont()
@@ -444,7 +456,14 @@ class CardSlotDetailWindow(QDialog):
                 byte_label = f"H[{idx}-{idx2}]"
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                # Default from pattern stats when available
                 stat_val_raw = stats.get(stat_key) if stat_key else None
+                # Override with card-specific expectation if defined
+                if stat_key in card_expect:
+                    try:
+                        stat_val_raw = card_expect[stat_key]
+                    except Exception:
+                        stat_val_raw = None
                 _add_row(grid_row, byte_label, idx, combined, stat_key, stat_val_raw, is_two_byte=True)
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
@@ -456,6 +475,12 @@ class CardSlotDetailWindow(QDialog):
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
                 stat_val_raw = stats.get(stat_key) if stat_key else None
+                # Override with card-specific expectation if defined
+                if stat_key in card_expect:
+                    try:
+                        stat_val_raw = card_expect[stat_key]
+                    except Exception:
+                        stat_val_raw = None
                 _add_row(grid_row, byte_label, idx, h_byte, stat_key, stat_val_raw, is_two_byte=False)
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
