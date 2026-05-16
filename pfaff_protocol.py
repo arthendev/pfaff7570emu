@@ -66,6 +66,7 @@ class PFAFFProtocol:
     _STATE_READ_KS_PARAMS = 16    # collecting 7 raw parameter bytes for KS command
     _STATE_READ_KS_WAIT_ETX = 17  # after 7 KS params, waiting for CTRL_ETX terminator
     _STATE_READ_KS_WAIT_ACK = 18  # waiting for CTRL_ACK after a KS chunk
+    _STATE_WRITE_CARD_WAIT_FINAL_ETX = 19  # after last data chunk ACK, expect final CTRL_ETX
 
     # Card data chunk sub-states (used when _state == _STATE_WRITE_CARD_DATA)
     _CARD_CHUNK_WAIT_START  = 0  # waiting for CTRL_ENQ (or bare size byte)
@@ -354,6 +355,18 @@ class PFAFFProtocol:
                     self._abort_write_card()
                 else:
                     logger.warning(f"KN: unexpected byte 0x{byte:02X} waiting for header CTRL_ETX - aborting")
+                    self._abort_write_card()
+
+            elif self._state == self._STATE_WRITE_CARD_WAIT_FINAL_ETX:
+                if byte == self.CTRL_ETX:
+                    # Host signalled end of transfer — commit the accumulated data.
+                    logger.info("KN: final CTRL_ETX received — committing written card")
+                    self._commit_write_card()
+                elif byte == self.CTRL_EOT:
+                    logger.info("KN: EOT received waiting for final CTRL_ETX - aborting")
+                    self._abort_write_card()
+                else:
+                    logger.warning(f"KN: unexpected byte 0x{byte:02X} waiting for final CTRL_ETX - aborting")
                     self._abort_write_card()
 
             elif self._state == self._STATE_RAW_CMD_MNEMONIC:
@@ -794,7 +807,10 @@ class PFAFFProtocol:
         )
 
         if total_received >= total_expected:
-            self._commit_write_card()
+            # All bytes received — acknowledge the final chunk, but wait for
+            # an explicit CTRL_ETX from the host before committing.
+            logger.info("Write Card: all chunks received — ACK sent, waiting for final CTRL_ETX to commit")
+            self._state = self._STATE_WRITE_CARD_WAIT_FINAL_ETX
 
         return bytes([self.CTRL_ACK])
 
