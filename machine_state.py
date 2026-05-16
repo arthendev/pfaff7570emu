@@ -143,6 +143,7 @@ class MemorySlot:
             "n": 0,
             "x_min": None, "x_max": None,
             "y_min": None, "y_max": None,
+            "y_min_abs": None,
             "y_min_norm": None, "y_max_norm": None,
             "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
@@ -179,6 +180,7 @@ class MemorySlot:
         stats["x_min"] = min(xs)
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
+        stats["y_min_abs"] = abs(stats["y_min"])
         stats["y_max"] = max(ys)
         stats["y_min_norm"] = 0
         stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
@@ -363,23 +365,62 @@ class CardMemorySlot:
                     pattern_xytacc.extend([int(x), int(y), 0])
 
         elif self.pattern_type == "MAXI":
-            side_transport_acc = 0
-            raw = self.pattern_raw
-            for i in range(0, len(raw), 7):
-                group = raw[i:i+7]
-                if len(group) < 7:
+            # Card-encoded MAXI hex triplets: pattern_raw is hex bytes.
+            # Each triplet is (b0, b1, b2): transport diff, dx encoded, y absolute.
+            raw = (self.pattern_raw or "").strip()
+            bytes_list: List[int] = []
+            for i in range(0, len(raw), 2):
+                chunk = raw[i:i+2]
+                if len(chunk) < 2:
                     break
                 try:
-                    x = int(group[0:3])
-                    y = int(group[3:5])
-                    side_transport = int(group[5:7])
-                    side_transport_acc += side_transport
-                except (ValueError, IndexError):
+                    bytes_list.append(int(chunk, 16))
+                except ValueError:
                     break
-                pattern_bytes.extend([x, y, side_transport])
-                pattern_xy.extend([x, y + side_transport_acc])
-                pattern_xyt.extend([x, y, side_transport])
-                pattern_xytacc.extend([x, y, side_transport_acc])
+
+            if bytes_list:
+                specials = {0x80, 0x8A}
+                start = 1 if bytes_list[0] in specials else 0
+                end = len(bytes_list) - 1 if bytes_list[-1] in specials else len(bytes_list)
+                body = bytes_list[start:end]
+                pattern_bytes = list(body)
+
+                triplets = len(body) // 3
+                xs: List[int] = []
+                ys: List[int] = []
+                prev_x = 0
+                dy_acc = 0
+                for i in range(triplets):
+                    b0 = body[i*3]
+                    b1 = body[i*3 + 1]
+                    b2 = body[i*3 + 2]
+
+                    transport = b0 - 0xC6
+                    dy_acc += transport
+                    dx = b1 - 0x5B
+                    x = prev_x - dx
+                    y = b2 + dy_acc
+                    xs.append(x)
+                    ys.append(y)
+                    # store immediate transport and accumulated transport
+                    pattern_xyt.extend([int(x), int(y), int(transport)])
+                    pattern_xytacc.extend([int(x), int(y), int(dy_acc)])
+                    prev_x = x
+
+                if xs:
+                    min_x = min(xs)
+                    if min_x < 0:
+                        shift = -min_x
+                        xs = [x + shift for x in xs]
+                        # shift stored x values in xyt/xytacc
+                        for idx in range(0, len(pattern_xyt), 3):
+                            pattern_xyt[idx] = int(pattern_xyt[idx]) + shift
+                        for idx in range(0, len(pattern_xytacc), 3):
+                            pattern_xytacc[idx] = int(pattern_xytacc[idx]) + shift
+
+                # interleave into pattern_xy
+                for x, y in zip(xs, ys):
+                    pattern_xy.extend([int(x), int(y)])
 
         self.pattern_bytes = pattern_bytes
         self.pattern_xy = pattern_xy

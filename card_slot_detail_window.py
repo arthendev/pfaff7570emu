@@ -319,7 +319,7 @@ class CardSlotDetailWindow(QDialog):
         except Exception:
             stats = {}
 
-        if getattr(self.slot, 'pattern_type', None) in ("9mm", "MAXI"):
+        if self.slot.pattern_type== "9mm":
             mapping = {
                 2: ("fix_0x10", "Fixed byte?"),               # DONE
                 3: ("fix_0x02", "Fixed byte?"),               # DONE
@@ -331,7 +331,29 @@ class CardSlotDetailWindow(QDialog):
                 11: ("span_x", "max(xs) - min(xs)"),          # DONE
                 13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
                 15: ("span_y", "max(ys) - min(ys)"),          # DONE
-                17: (None, "Unknown"),                        # DONE (scaling)
+                19: (None, "Unknown"),                        # DONE (unknown/scaling)
+                20: ("y_min_abs", "abs(min(ys))"),            # DONE
+                22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
+                24: ("size_preview", "size(preview_image)"),  # DONE
+                26: ("fix_0x01", "Fixed byte?"),              # DONE
+                27: ("size_pattern", "size(pattern_raw)"),    # DONE
+                29: ("size_name", "size(filename)"),          # DONE
+            }
+        elif self.slot.pattern_type== "MAXI":
+            mapping = {
+                2: ("fix_0x10", "Fixed byte?"),               # DONE
+                3: ("fix_0x02", "Fixed byte?"),               # DONE
+                4: ("bank", "Bank number?"),                  # DONE
+                5: ("slot_no", "Slot number"),                # DONE
+                6: ("type", "Pattern type"),                  # DONE
+                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
+                9: ("pn_x", "xs[end]"),                       # DONE
+                11: ("span_x", "max(xs) - min(xs)"),          # DONE
+                13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
+                15: ("span_y", "max(ys) - min(ys)"),          # DONE
+                17: ("dy_0n", "ys[n]-ys[0]"),                 # DONE
+                19: (None, "Unknown"),                        # DONE (unknown/scaling)
+                20: ("y_min_abs", "abs(min(ys))"),            # DONE
                 22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
                 24: ("size_preview", "size(preview_image)"),  # DONE
                 26: ("fix_0x01", "Fixed byte?"),              # DONE
@@ -747,16 +769,26 @@ class CardSlotDetailWindow(QDialog):
         self._type_label.setText(f"    Type:  {getattr(self.slot, 'pattern_type', '')}")
         self._bytes_label.setText(f"    Bytes:  {getattr(self.slot, 'get_size_bytes', lambda: 'N/A')()}" )
         self._stitches_label.setText(f"    Stitches:  {getattr(self.slot, 'get_size_stitches', lambda: 'N/A')()}" )
-        # Ensure pattern_xy is available for preview: decode 9mm patterns when needed
-        if getattr(self.slot, 'pattern_type', '') == "9mm":
+        # Ensure pattern_xy is available for preview: decode 9mm and MAXI patterns when needed
+        ptype = getattr(self.slot, 'pattern_type', '')
+        if ptype in ("9mm", "MAXI"):
             existing = list(getattr(self.slot, 'pattern_xy', []))
             if not existing:
                 try:
-                    decoded = self._decode_pattern_9mm(getattr(self.slot, 'pattern_raw', ''))
-                    # store back on the slot for persistence
-                    setattr(self.slot, 'pattern_xy', decoded)
+                    # Delegate parsing to the slot model so pattern_xyt and pattern_xytacc
+                    # are populated consistently (handles card hex and P-memory formats).
+                    self.slot.parse_pattern_data()
                 except Exception:
-                    pass
+                    # fallback: try local decoders for backward compatibility
+                    try:
+                        if ptype == "9mm":
+                            decoded = self._decode_pattern_9mm(getattr(self.slot, 'pattern_raw', ''))
+                            setattr(self.slot, 'pattern_xy', decoded)
+                        elif ptype == "MAXI":
+                            decoded = self._decode_pattern_maxi(getattr(self.slot, 'pattern_raw', ''))
+                            setattr(self.slot, 'pattern_xy', decoded)
+                    except Exception:
+                        pass
         self._preview.pattern_xy = list(getattr(self.slot, 'pattern_xy', []))
         self._preview.pattern_type = getattr(self.slot, 'pattern_type', "")
         self._preview.update()
@@ -914,6 +946,75 @@ class CardSlotDetailWindow(QDialog):
                 xs = [x + shift for x in xs]
 
         # Interleave into flat list
+        out = []
+        for x, y in zip(xs, ys):
+            out.append(int(x))
+            out.append(int(y))
+        return out
+
+    def _decode_pattern_maxi(self, raw: str) -> list:
+        """Decode MAXI pattern raw hex string into [x0,y0,x1,y1,...].
+
+        Rules:
+        - If first byte is 0x80 or 0x8A, skip it.
+        - If last byte is 0x80 or 0x8A, skip it.
+        - Remaining bytes are triplets: (b0, b1, b2)
+          dx_acc increment = b0 - 0xC6 (accumulative over time, starts at 0)
+          dx = b1 - 0x5B (relative difference)
+          y = b2 (absolute)
+          x(n) = x(n-1) - dx + dx_acc
+        - After decoding, if any x negative, shift all x by -min(x) so min(x) == 0.
+        """
+        if not raw:
+            return []
+        s = raw.strip()
+        # Build list of byte integers
+        bytes_list = []
+        for i in range(0, len(s), 2):
+            chunk = s[i:i+2]
+            if len(chunk) < 2:
+                break
+            try:
+                bytes_list.append(int(chunk, 16))
+            except ValueError:
+                break
+
+        if not bytes_list:
+            return []
+
+        specials = {0x80, 0x8A}
+        start = 1 if bytes_list and bytes_list[0] in specials else 0
+        end = len(bytes_list) - 1 if bytes_list and bytes_list[-1] in specials else len(bytes_list)
+
+        body = bytes_list[start:end]
+        if len(body) < 3:
+            return []
+
+        triplets = len(body) // 3
+
+        xs = []
+        ys = []
+        prev_x = 0
+        dy_acc = 0
+        for i in range(triplets):
+            b0 = body[i*3]
+            b1 = body[i*3 + 1]
+            b2 = body[i*3 + 2]
+
+            dy_acc += (b0 - 0xC6)
+            dx = b1 - 0x5B
+            x = prev_x - dx
+            y = b2 + dy_acc
+            xs.append(x)
+            ys.append(y)
+            prev_x = x
+
+        if xs:
+            min_x = min(xs)
+            if min_x < 0:
+                shift = -min_x
+                xs = [x + shift for x in xs]
+
         out = []
         for x, y in zip(xs, ys):
             out.append(int(x))
