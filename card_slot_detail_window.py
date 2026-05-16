@@ -50,7 +50,7 @@ class CardSlotDetailWindow(QDialog):
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(720)
-        self.setMinimumHeight(800)
+        self.setMinimumHeight(840)
         self._setup_ui()
         self._load_slot()
 
@@ -133,7 +133,7 @@ class CardSlotDetailWindow(QDialog):
         self._header_edit = QTextEdit()
         self._header_edit.setReadOnly(True)
         self._header_edit.setFont(QFont("Courier New", 9))
-        self._header_edit.setFixedHeight(80)
+        self._header_edit.setFixedHeight(40)
         raw_layout.addWidget(self._header_edit)
 
         pattern_label = QLabel("Pattern (raw)")
@@ -172,7 +172,7 @@ class CardSlotDetailWindow(QDialog):
         self._header_edit_2 = QTextEdit()
         self._header_edit_2.setReadOnly(True)
         self._header_edit_2.setFont(QFont("Courier New", 9))
-        self._header_edit_2.setFixedHeight(60)
+        self._header_edit_2.setFixedHeight(40)
         header_layout.addWidget(self._header_edit_2)
 
         header_layout.addWidget(QLabel("Byte Analysis:"))
@@ -295,29 +295,13 @@ class CardSlotDetailWindow(QDialog):
         return bytes_list
 
     def _populate_header_grid(self):
-        """Placeholder: populate header grid. Keep behavior similar to P-Memory window for now."""
-        try:
-            return self._populate_header_grid_75xx()
-        except Exception:
-            # If slot doesn't provide expected stats, just clear the grid
-            while self._header_grid.count():
-                item = self._header_grid.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-
-    # Reuse the existing implementations from slot_detail_window for now
-    def _populate_header_grid_75xx(self):
-        # Copying behavior from slot_detail_window but safe-guarded by try/except
         while self._header_grid.count():
             item = self._header_grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         header_bytes = self._get_header_bytes()
-        try:
-            stats = self.slot.get_pattern_stats()
-        except Exception:
-            stats = {}
+        stats = self.slot.get_pattern_stats()
 
         if self.slot.pattern_type== "9mm":
             mapping = {
@@ -383,7 +367,7 @@ class CardSlotDetailWindow(QDialog):
         skip_indices = set(two_byte_pairs.values())
 
         # Prepare card-specific expected value callables for header bytes
-        ptype = getattr(self.slot, 'pattern_type', '')
+        ptype = self.slot.pattern_type
         type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Small hoop': 0x03, 'Large hoop': 0x03}
         card_expect = {
             'fix_0x00': 0x00,
@@ -484,14 +468,20 @@ class CardSlotDetailWindow(QDialog):
                 byte_label = f"H[{idx}-{idx2}]"
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                
                 # Default from pattern stats when available
                 stat_val_raw = stats.get(stat_key) if stat_key else None
-                # Override with card-specific expectation if defined
-                if stat_key in card_expect:
-                    try:
-                        stat_val_raw = card_expect[stat_key]
-                    except Exception:
-                        stat_val_raw = None
+
+                # Special computed sizes come from slot fields (pattern_raw, preview_raw, filename)
+                if stat_key == 'size_pattern':
+                    stat_val_raw = len(self.slot.pattern_raw) // 2
+                elif stat_key == 'size_preview':
+                    stat_val_raw = len(self.slot.preview_raw) // 2
+                elif stat_key == 'size_name':
+                    stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key in card_expect: # Override with card-specific expectation if defined
+                    stat_val_raw = card_expect[stat_key]
+
                 _add_row(grid_row, byte_label, idx, combined, stat_key, stat_val_raw, is_two_byte=True)
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
@@ -502,13 +492,20 @@ class CardSlotDetailWindow(QDialog):
                 byte_label = f"H[{idx}]"
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                
+                # Default from pattern stats when available
                 stat_val_raw = stats.get(stat_key) if stat_key else None
-                # Override with card-specific expectation if defined
-                if stat_key in card_expect:
-                    try:
-                        stat_val_raw = card_expect[stat_key]
-                    except Exception:
-                        stat_val_raw = None
+
+                # Special computed sizes come from slot fields (pattern_raw, preview_raw, filename)
+                if stat_key == 'size_pattern':
+                    stat_val_raw = len(self.slot.pattern_raw) // 2
+                elif stat_key == 'size_preview':
+                    stat_val_raw = len(self.slot.preview_raw) // 2
+                elif stat_key == 'size_name':
+                    stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key in card_expect: # Override with card-specific expectation if defined
+                    stat_val_raw = card_expect[stat_key]
+
                 _add_row(grid_row, byte_label, idx, h_byte, stat_key, stat_val_raw, is_two_byte=False)
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
@@ -527,10 +524,7 @@ class CardSlotDetailWindow(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        try:
-            s = self.slot.get_pattern_stats()
-        except Exception:
-            s = {}
+        s = self.slot.get_pattern_stats()
         mono = QFont("Courier New", 9)
         bold_font = QFont()
         bold_font.setBold(True)
@@ -619,13 +613,13 @@ class CardSlotDetailWindow(QDialog):
 
     def _populate_points_grid(self):
         """Fill the Pattern tab with point list: index, (x,y) Dec, (x,y) Hex."""
-        data = list(getattr(self.slot, 'pattern_xy', []))
+        data = list(self.slot.pattern_xy)
         xs = data[0::2]
         ys = data[1::2]
         n = min(len(xs), len(ys))
 
-        xyt = list(getattr(self.slot, 'pattern_xyt', []))
-        xytacc = list(getattr(self.slot, 'pattern_xytacc', []))
+        xyt = list(self.slot.pattern_xyt)
+        xytacc = list(self.slot.pattern_xytacc)
 
         mono = QFont("Courier New", 9)
 
@@ -772,37 +766,21 @@ class CardSlotDetailWindow(QDialog):
     def _load_slot(self):
         """Populate all fields from the current slot data."""
         self._slot_label.setText(f"Slot:  C {self.slot.slot_id}")
-        self._type_label.setText(f"    Type:  {getattr(self.slot, 'pattern_type', '')}")
-        self._bytes_label.setText(f"    Bytes:  {getattr(self.slot, 'get_size_bytes', lambda: 'N/A')()}" )
-        self._stitches_label.setText(f"    Stitches:  {getattr(self.slot, 'get_size_stitches', lambda: 'N/A')()}" )
+        self._type_label.setText(f"    Type:  {self.slot.pattern_type}")
+        self._bytes_label.setText(f"    Bytes:  {self.slot.get_size_bytes()}")
+        self._stitches_label.setText(f"    Stitches:  {self.slot.get_size_stitches()}")
         # Ensure pattern_xy is available for preview: decode 9mm and MAXI patterns when needed
-        ptype = getattr(self.slot, 'pattern_type', '')
+        ptype = self.slot.pattern_type
         if ptype in ("9mm", "MAXI"):
-            existing = list(getattr(self.slot, 'pattern_xy', []))
-            if not existing:
-                try:
-                    # Delegate parsing to the slot model so pattern_xyt and pattern_xytacc
-                    # are populated consistently (handles card hex and P-memory formats).
-                    self.slot.parse_pattern_data()
-                except Exception:
-                    # fallback: try local decoders for backward compatibility
-                    try:
-                        if ptype == "9mm":
-                            decoded = self._decode_pattern_9mm(getattr(self.slot, 'pattern_raw', ''))
-                            setattr(self.slot, 'pattern_xy', decoded)
-                        elif ptype == "MAXI":
-                            decoded = self._decode_pattern_maxi(getattr(self.slot, 'pattern_raw', ''))
-                            setattr(self.slot, 'pattern_xy', decoded)
-                    except Exception:
-                        pass
-        self._preview.pattern_xy = list(getattr(self.slot, 'pattern_xy', []))
-        self._preview.pattern_type = getattr(self.slot, 'pattern_type', "")
+            self.slot.parse_pattern_data()
+        self._preview.pattern_xy = list(self.slot.pattern_xy)
+        self._preview.pattern_type = self.slot.pattern_type
         self._preview.update()
         self._refresh_raw_display()
         self._populate_header_grid()
         self._populate_pattern_grid()
         self._populate_points_grid()
-        self._clear_btn.setEnabled(getattr(self.slot, 'pattern_type', "Empty") != "Empty")
+        self._clear_btn.setEnabled(self.slot.pattern_type != "Empty")
         self._update_nav_buttons()
 
     def _format_header_raw(self, raw: str) -> str:
@@ -891,142 +869,6 @@ class CardSlotDetailWindow(QDialog):
 
         return '\n'.join(rows)
 
-    def _decode_pattern_9mm(self, raw: str) -> list:
-        """Decode 9mm pattern raw hex string into [x0,y0,x1,y1,...].
-
-        Rules:
-        - If first byte is 0x80 or 0x8A, skip it.
-        - If last byte is 0x80 or 0x8A, skip it.
-        - Remaining bytes are pairs: (dx_encoded, y_abs)
-          dx = dx_encoded - 0x5B
-          x(n) = x(n-1) - dx (start x(0)=0)
-        - After decoding, if any x < 0, shift all x by -min(x) so min(x) == 0.
-        """
-        if not raw:
-            return []
-        s = raw.strip()
-        # Build list of byte integers
-        bytes_list = []
-        for i in range(0, len(s), 2):
-            chunk = s[i:i+2]
-            if len(chunk) < 2:
-                break
-            try:
-                bytes_list.append(int(chunk, 16))
-            except ValueError:
-                # stop on invalid data
-                break
-
-        if not bytes_list:
-            return []
-
-        # Skip leading/trailing special markers
-        specials = {0x80, 0x8A}
-        start = 1 if bytes_list and bytes_list[0] in specials else 0
-        end = len(bytes_list) - 1 if bytes_list and bytes_list[-1] in specials else len(bytes_list)
-
-        body = bytes_list[start:end]
-        # Ensure even number of bytes (pairs)
-        if len(body) < 2:
-            return []
-        pair_count = len(body) // 2
-
-        xs = []
-        ys = []
-        prev_x = 0
-        for i in range(pair_count):
-            hi = body[i*2]
-            lo = body[i*2 + 1]
-            dx = hi - 0x5B
-            x = prev_x - dx
-            y = lo
-            xs.append(x)
-            ys.append(y)
-            prev_x = x
-
-        # If any x negative, shift all x so minimum becomes 0
-        if xs:
-            min_x = min(xs)
-            if min_x < 0:
-                shift = -min_x
-                xs = [x + shift for x in xs]
-
-        # Interleave into flat list
-        out = []
-        for x, y in zip(xs, ys):
-            out.append(int(x))
-            out.append(int(y))
-        return out
-
-    def _decode_pattern_maxi(self, raw: str) -> list:
-        """Decode MAXI pattern raw hex string into [x0,y0,x1,y1,...].
-
-        Rules:
-        - If first byte is 0x80 or 0x8A, skip it.
-        - If last byte is 0x80 or 0x8A, skip it.
-        - Remaining bytes are triplets: (b0, b1, b2)
-          dx_acc increment = b0 - 0xC6 (accumulative over time, starts at 0)
-          dx = b1 - 0x5B (relative difference)
-          y = b2 (absolute)
-          x(n) = x(n-1) - dx + dx_acc
-        - After decoding, if any x negative, shift all x by -min(x) so min(x) == 0.
-        """
-        if not raw:
-            return []
-        s = raw.strip()
-        # Build list of byte integers
-        bytes_list = []
-        for i in range(0, len(s), 2):
-            chunk = s[i:i+2]
-            if len(chunk) < 2:
-                break
-            try:
-                bytes_list.append(int(chunk, 16))
-            except ValueError:
-                break
-
-        if not bytes_list:
-            return []
-
-        specials = {0x80, 0x8A}
-        start = 1 if bytes_list and bytes_list[0] in specials else 0
-        end = len(bytes_list) - 1 if bytes_list and bytes_list[-1] in specials else len(bytes_list)
-
-        body = bytes_list[start:end]
-        if len(body) < 3:
-            return []
-
-        triplets = len(body) // 3
-
-        xs = []
-        ys = []
-        prev_x = 0
-        dy_acc = 0
-        for i in range(triplets):
-            b0 = body[i*3]
-            b1 = body[i*3 + 1]
-            b2 = body[i*3 + 2]
-
-            dy_acc += (b0 - 0xC6)
-            dx = b1 - 0x5B
-            x = prev_x - dx
-            y = b2 + dy_acc
-            xs.append(x)
-            ys.append(y)
-            prev_x = x
-
-        if xs:
-            min_x = min(xs)
-            if min_x < 0:
-                shift = -min_x
-                xs = [x + shift for x in xs]
-
-        out = []
-        for x, y in zip(xs, ys):
-            out.append(int(x))
-            out.append(int(y))
-        return out
-
     def _on_show_canvas_changed(self):
         self._preview.show_canvas = self._show_canvas_cb.isChecked()
         self._preview.update()
@@ -1036,13 +878,13 @@ class CardSlotDetailWindow(QDialog):
         self._preview.update()
 
     def _refresh_raw_display(self):
-        formatted_header = self._format_header_raw(getattr(self.slot, 'header_raw', ''))
+        formatted_header = self._format_header_raw(self.slot.header_raw)
         self._header_edit.setPlainText(formatted_header)
         self._header_edit_2.setPlainText(formatted_header)
         self._pattern_edit.setPlainText(
-            self._format_pattern_raw(getattr(self.slot, 'pattern_raw', ''), getattr(self.slot, 'pattern_type', '')))
+            self._format_pattern_raw(self.slot.pattern_raw, self.slot.pattern_type))
         # preview_raw is the raw preview field for card slots
-        self._preview_image_edit.setPlainText(getattr(self.slot, 'preview_raw', ''))
+        self._preview_image_edit.setPlainText(self.slot.preview_raw)
 
     def refresh(self):
         """Re-read from the slot and update all displayed fields."""
@@ -1050,16 +892,7 @@ class CardSlotDetailWindow(QDialog):
 
     def _clear_slot(self):
         """Clear the slot, refresh display, and notify the main window."""
-        try:
-            self.slot.clear()
-        except Exception:
-            # If slot doesn't implement clear(), try to reset common fields
-            for attr in ('header_raw', 'pattern_raw', 'pattern_xy', 'pattern_xyt', 'pattern_xytacc', 'preview_raw'):
-                if hasattr(self.slot, attr):
-                    try:
-                        setattr(self.slot, attr, '' if isinstance(getattr(self.slot, attr), str) else [])
-                    except Exception:
-                        pass
+        self.slot.clear()
         self.refresh()
         if self._on_clear_callback:
             self._on_clear_callback()
