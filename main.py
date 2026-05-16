@@ -556,9 +556,14 @@ class PfaffCreativeEmulator(QMainWindow):
             # find which card space contains this slot
             space = None
             for s in (self.machine_state.card_9mm, self.machine_state.card_maxi, self.machine_state.card_embroidery):
-                if slot.slot_id in s.slots:
-                    space = s
-                    break
+                # prefer matching by object identity to avoid collisions when multiple
+                # card spaces contain slots with the same numeric slot_id
+                try:
+                    if s.get_slot(slot.slot_id) is slot:
+                        space = s
+                        break
+                except Exception:
+                    pass
             if space is None:
                 return
             slots_list = space.sorted_slots()
