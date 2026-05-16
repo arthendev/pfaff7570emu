@@ -50,7 +50,8 @@ class PfaffCreativeEmulator(QMainWindow):
         self.serial_handler.data_received.connect(self.on_serial_data_received)
         self.serial_handler.error_occurred.connect(self.on_serial_error)
         self.serial_handler.connection_changed.connect(self._on_connection_changed)
-        self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed)
+        self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed,
+                                       on_card_changed=self._on_card_changed)
         
         # Setup UI
         self.setup_ui()
@@ -710,6 +711,11 @@ class PfaffCreativeEmulator(QMainWindow):
         self._set_modified(True)
         for win in list(self._slot_detail_windows.values()):
             win._load_slot()
+
+    def _on_card_changed(self):
+        """Refresh Card Memory tab after a write card slot operation"""
+        self.card_memory_tab.update_ui(self.machine_state)
+        self._set_modified(True)
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""
