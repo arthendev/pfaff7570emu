@@ -280,7 +280,7 @@ class CardMemorySlot:
 
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
-        return len(self.pattern_bytes)
+        return len(self.pattern_raw) // 2
 
     def get_size_stitches(self) -> int:
         """Get number of stitches in the pattern"""
