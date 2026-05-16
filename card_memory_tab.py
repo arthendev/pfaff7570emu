@@ -186,8 +186,10 @@ class CardSpaceTab(QWidget):
                 is_embroidery=self.space.space_name == "Embroidery",
             )
             self._slot_widgets.append(widget)
-            self._grid_layout.addWidget(widget, i // columns, i % columns)
+            self._grid_layout.addWidget(widget, i // columns, i % columns,
+                                        Qt.AlignLeft | Qt.AlignTop)
 
+        self._grid_layout.setColumnStretch(columns, 1)
         self._grid_layout.setRowStretch(len(slots) // columns + 1, 1)
 
     def update_space(self, space: CardMemorySpace):
