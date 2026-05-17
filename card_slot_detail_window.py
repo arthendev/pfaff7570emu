@@ -46,7 +46,9 @@ class CardSlotDetailWindow(QDialog):
         self._on_clear_callback = on_clear
         self._on_navigate = on_navigate
         self._machine_model = machine_model or ""
-        self.setWindowTitle(f"Card Slot C {slot_id} - Details")
+        # Do not display numeric slot IDs — title uses filename when available
+        title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+        self.setWindowTitle(title)
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(720)
@@ -260,9 +262,9 @@ class CardSlotDetailWindow(QDialog):
 
     def _navigate(self, delta: int):
         """Switch to an adjacent slot."""
-        # find current index in the slots list
+        # find current index in the slots list using object identity
         try:
-            current_idx = next(i for i, s in enumerate(self._slots) if s.slot_id == self.slot.slot_id)
+            current_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
         except StopIteration:
             return
         new_idx = current_idx + delta
@@ -271,12 +273,13 @@ class CardSlotDetailWindow(QDialog):
         if self._on_navigate and not self._on_navigate(current_idx, new_idx):
             return
         self.slot = self._slots[new_idx]
-        self.setWindowTitle(f"Card Slot C {self.slot.slot_id} - Details")
+        title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+        self.setWindowTitle(title)
         self._load_slot()
 
     def _update_nav_buttons(self):
         try:
-            idx = next(i for i, s in enumerate(self._slots) if s.slot_id == self.slot.slot_id)
+            idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
         except StopIteration:
             idx = 0
         self._prev_btn.setEnabled(idx > 0)
@@ -765,7 +768,9 @@ class CardSlotDetailWindow(QDialog):
 
     def _load_slot(self):
         """Populate all fields from the current slot data."""
-        self._slot_label.setText(f"Slot:  C {self.slot.slot_id}")
+        # Do not show persistent numeric slot IDs — show filename when available
+        slot_text = f"Slot: {self.slot.filename}" if self.slot.filename else "Slot"
+        self._slot_label.setText(slot_text)
         self._type_label.setText(f"    Type:  {self.slot.pattern_type}")
         self._bytes_label.setText(f"    Bytes:  {self.slot.get_size_bytes()}")
         self._stitches_label.setText(f"    Stitches:  {self.slot.get_size_stitches()}")

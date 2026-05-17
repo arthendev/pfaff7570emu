@@ -278,6 +278,16 @@ class CardMemorySlot:
     pattern_xyt: List[int] = field(default_factory=list)
     pattern_xytacc: List[int] = field(default_factory=list)
 
+    def clear(self) -> None:
+        """Remove this slot from its parent CardMemorySpace (if set) and clear data.
+
+        This is the single place that implements clearing/removal of a card slot's
+        pattern. It assumes the slot was previously added to a CardMemorySpace via
+        `CardMemorySpace.set_slot()` which sets a `_parent` attribute on the slot.
+        """
+        parent = self._parent
+        parent.slots.remove(self)
+
     def get_size_bytes(self) -> int:
         """Get size of data in bytes"""
         return len(self.pattern_raw) // 2
@@ -567,32 +577,41 @@ class CardMemorySpace:
 
     def __init__(self, space_name: str):
         self.space_name = space_name
-        self.slots: Dict[int, CardMemorySlot] = {}
+        # store as a simple list: dynamic positions, no persistent slot numbers
+        self.slots: List[CardMemorySlot] = []
 
-    def get_slot(self, slot_id: int) -> Optional[CardMemorySlot]:
-        return self.slots.get(slot_id)
+    def get_slot(self, position: int) -> Optional[CardMemorySlot]:
+        """Return the slot at the given position (0-based index)."""
+        return self.slots[position]
 
     def set_slot(self, slot: CardMemorySlot) -> None:
-        self.slots[slot.slot_id] = slot
+        """Append or replace a slot. We prefer to replace by matching slot_id
+        if present (for compatibility), otherwise append to the dynamic list."""
+        # assign parent reference and append to the dynamic list
+        slot._parent = self
+        self.slots.append(slot)
 
-    def delete_slot(self, slot_id: int) -> None:
-        self.slots.pop(slot_id, None)
+    def delete_slot(self, position: int) -> None:
+        """Delete the slot at the given position (0-based index). If out of range, do nothing."""
+        self.slots.pop(position)
 
     def clear(self) -> None:
         self.slots.clear()
 
     def sorted_slots(self) -> List[CardMemorySlot]:
-        """Return all occupied slots sorted by slot_id."""
-        return sorted(self.slots.values(), key=lambda s: s.slot_id)
+        """Return all occupied slots in stored order (dynamic list)."""
+        return list(self.slots)
 
     def to_dict(self) -> List[Dict[str, Any]]:
-        return [slot.to_dict() for slot in self.sorted_slots()]
+        return [slot.to_dict() for slot in self.slots]
 
     def from_dict(self, data: List[Dict[str, Any]]) -> None:
+        # load as a simple ordered list to preserve stored ordering
         self.slots.clear()
         for item in data:
             slot = CardMemorySlot.from_dict(item)
-            self.slots[slot.slot_id] = slot
+            slot._parent = self
+            self.slots.append(slot)
 
 
 class MachineState:

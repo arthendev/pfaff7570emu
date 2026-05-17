@@ -553,14 +553,12 @@ class PfaffCreativeEmulator(QMainWindow):
         """
         # Determine slot kind and normalize slots list + index
         if isinstance(slot, CardMemorySlot):
-            # find which card space contains this slot
+            # find which card space contains this slot (match by object identity)
             space = None
-            for s in (self.machine_state.card_9mm, self.machine_state.card_maxi, self.machine_state.card_embroidery):
-                # prefer matching by object identity to avoid collisions when multiple
-                # card spaces contain slots with the same numeric slot_id
+            for cand in (self.machine_state.card_9mm, self.machine_state.card_maxi, self.machine_state.card_embroidery):
                 try:
-                    if s.get_slot(slot.slot_id) is slot:
-                        space = s
+                    if slot in cand.slots:
+                        space = cand
                         break
                 except Exception:
                     pass
@@ -568,10 +566,10 @@ class PfaffCreativeEmulator(QMainWindow):
                 return
             slots_list = space.sorted_slots()
             try:
-                idx = next(i for i, s in enumerate(slots_list) if s.slot_id == slot.slot_id)
+                idx = next(i for i, s in enumerate(slots_list) if s is slot)
             except StopIteration:
                 return
-            unique_key = ("card", space.space_name, slot.slot_id)
+            unique_key = ("card", space.space_name, id(slot))
             existing = self._slot_detail_windows.get(unique_key)
             if existing is not None:
                 existing.raise_()
@@ -585,13 +583,13 @@ class PfaffCreativeEmulator(QMainWindow):
             def on_navigate(old_idx, new_idx):
                 # old_idx/new_idx are indices into slots_list
                 new_slot = slots_list[new_idx]
-                new_key = ("card", space.space_name, new_slot.slot_id)
+                new_key = ("card", space.space_name, id(new_slot))
                 if new_key in self._slot_detail_windows:
                     self._slot_detail_windows[new_key].raise_()
                     self._slot_detail_windows[new_key].activateWindow()
                     return False
                 old_slot = slots_list[old_idx]
-                old_key = ("card", space.space_name, old_slot.slot_id)
+                old_key = ("card", space.space_name, id(old_slot))
                 w = self._slot_detail_windows.pop(old_key, None)
                 if w:
                     self._slot_detail_windows[new_key] = w

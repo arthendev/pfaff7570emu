@@ -101,15 +101,7 @@ class CardSlotWidget(QFrame):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
 
-        # Slot number label
-        slot_label = QLabel(str(self.slot.slot_id))
-        slot_label_font = QFont()
-        slot_label_font.setBold(True)
-        slot_label_font.setPointSize(10)
-        slot_label.setFont(slot_label_font)
-        slot_label.setAlignment(Qt.AlignCenter)
-        slot_label.setFixedWidth(28)
-        main_layout.addWidget(slot_label)
+        # No persistent slot number shown — display only pattern info and preview
 
         right_layout = QVBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
