@@ -663,7 +663,7 @@ class PFAFFProtocol:
 
     def _next_free_card_slot(self, space) -> int:
         """Return the lowest non-negative slot_id not currently occupied in the given card space."""
-        used = set(space.slots.keys())
+        used = set(s.slot_id for s in space.slots)
         i = 0
         while i in used:
             i += 1
