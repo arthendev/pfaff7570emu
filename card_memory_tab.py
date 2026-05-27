@@ -214,7 +214,7 @@ class CardMemoryTab(QWidget):
         controls_layout.addWidget(card_label)
 
         self._card_number_spinbox = QSpinBox()
-        self._card_number_spinbox.setRange(1, 255)
+        self._card_number_spinbox.setRange(0, 255)
         self._card_number_spinbox.setValue(1)
         controls_layout.addWidget(self._card_number_spinbox)
 
