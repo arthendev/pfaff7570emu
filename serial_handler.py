@@ -3,6 +3,7 @@ Serial communication handler
 """
 
 import threading
+import time
 from typing import Callable, Optional
 import serial
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -105,17 +106,40 @@ class SerialHandler(QObject):
     
     def _read_loop(self):
         """Read loop running in separate thread"""
+        # Use a blocking read to avoid busy-waiting when there's no data.
+        # `read(1)` will block up to the port timeout (set in `connect`) and
+        # return empty bytes on timeout, keeping CPU usage low.
         while self.running and self.is_connected:
             try:
-                if self.serial_port.in_waiting > 0:
-                    data = self.serial_port.read(self.serial_port.in_waiting)
-                    if data:
-                        self.data_received.emit(data)
-                        logger.debug(f"Received {len(data)} bytes")
+                # Block waiting for at least 1 byte (respects Serial.timeout)
+                first = self.serial_port.read(1)
+                if not first:
+                    # timeout occurred, loop again (low CPU usage)
+                    continue
+
+                data = first
+
+                # Read any additional bytes that have already arrived
+                try:
+                    remaining = self.serial_port.in_waiting
+                except Exception:
+                    remaining = 0
+
+                if remaining:
+                    data += self.serial_port.read(remaining)
+
+                if data:
+                    self.data_received.emit(data)
+                    logger.debug(f"Received {len(data)} bytes")
+
             except Exception as e:
                 if self.running:
                     error_msg = f"Error reading from serial port: {str(e)}"
                     logger.error(error_msg)
                     self.error_occurred.emit(error_msg)
-                    self.disconnect()
+                    # Attempt a clean disconnect; break to end thread
+                    try:
+                        self.disconnect()
+                    except Exception:
+                        pass
                     break
