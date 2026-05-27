@@ -631,6 +631,9 @@ class MachineState:
         self.card_9mm = CardMemorySpace("9mm")
         self.card_maxi = CardMemorySpace("MAXI")
         self.card_embroidery = CardMemorySpace("Embroidery")
+        # Card presence and number (controlled by UI)
+        self.card_inserted: bool = False
+        self.card_number: int = 1
         self.machine_model = None
         
         if model_name is not None:

@@ -20,6 +20,7 @@ class PFAFFProtocol:
     CTRL_ENQ = 0x05 # Enquiry
     CTRL_ACK = 0x06 # Acknowledge
     CTRL_BEL = 0x07 # Bell
+    CTRL_BS  = 0x08 # Backspace
     CTRL_NAK = 0x15 # Negative Acknowledge
     CTRL_ETB = 0x17 # End of Transmission Block
 
@@ -147,6 +148,14 @@ class PFAFFProtocol:
 
         # Raw command mnemonic collection (KN, KB, KL — preceded by CTRL_ETX)
         self._raw_cmd_mnemonic_buffer = bytearray()
+
+    def _card_available(self) -> bool:
+        """Return True if a card is currently marked as inserted in machine_state."""
+        return self.machine_state.card_inserted
+
+    def _card_disabled_response(self) -> bytes:
+        """Return the bytes to send when card operations are disabled (CTRL_NAK + CTRL_BS)."""
+        return bytes([self.CTRL_NAK, self.CTRL_BS])
 
     def process_incoming(self, data: bytes) -> bytes:
         """
@@ -389,16 +398,32 @@ class PFAFFProtocol:
                         mnemonic = bytes(self._raw_cmd_mnemonic_buffer).decode('ascii', errors='replace')
                         self._raw_cmd_mnemonic_buffer = bytearray()
                         if mnemonic == self.CMD_WRITE_CARD:
-                            response.extend(self.handle_write_card_init())
+                            if not self._card_available():
+                                response.extend(self._card_disabled_response())
+                                self._state = self._STATE_IDLE
+                            else:
+                                response.extend(self.handle_write_card_init())
                         elif mnemonic == self.CMD_READ_CARD_PREVIEW:
-                            self._kb_params_buffer = bytearray()
-                            self._state = self._STATE_READ_KB_PARAMS
+                            if not self._card_available():
+                                response.extend(self._card_disabled_response())
+                                self._state = self._STATE_IDLE
+                            else:
+                                self._kb_params_buffer = bytearray()
+                                self._state = self._STATE_READ_KB_PARAMS
                         elif mnemonic == self.CMD_READ_CARD_SLOT:
-                            self._ks_params_buffer = bytearray()
-                            self._state = self._STATE_READ_KS_PARAMS
+                            if not self._card_available():
+                                response.extend(self._card_disabled_response())
+                                self._state = self._STATE_IDLE
+                            else:
+                                self._ks_params_buffer = bytearray()
+                                self._state = self._STATE_READ_KS_PARAMS
                         elif mnemonic == self.CMD_DELETE_CARD:
-                            self._kl_params_buffer = bytearray()
-                            self._state = self._STATE_READ_KL_PARAMS
+                            if not self._card_available():
+                                response.extend(self._card_disabled_response())
+                                self._state = self._STATE_IDLE
+                            else:
+                                self._kl_params_buffer = bytearray()
+                                self._state = self._STATE_READ_KL_PARAMS
                         else:
                             logger.warning(f"Raw cmd: unknown mnemonic {mnemonic!r} - resetting to idle")
                             self._state = self._STATE_IDLE
@@ -411,6 +436,8 @@ class PFAFFProtocol:
         if cmd == self.CMD_LIST_PMEMORY:
             return self.handle_list_pmemory()
         if cmd == self.CMD_LIST_CARD:
+            if not self._card_available():
+                return self._card_disabled_response()
             return self.handle_list_card()
         if cmd.startswith(self.CMD_DELETE_PMEMORY_PREFIX) and len(cmd) == 4:
             return self.handle_delete_pmemory(cmd[2:])

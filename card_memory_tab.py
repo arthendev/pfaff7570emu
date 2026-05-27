@@ -3,7 +3,8 @@ Card Memory tab widget
 """
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-                             QLabel, QFrame, QScrollArea, QTabWidget)
+                             QLabel, QFrame, QScrollArea, QTabWidget,
+                             QCheckBox, QSpinBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QImage, QPixmap, QPainter, QTransform
 
@@ -200,6 +201,35 @@ class CardMemoryTab(QWidget):
     def setup_ui(self):
         layout = QVBoxLayout()
 
+        # Top controls: card inserted checkbox and card number selector
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+
+        self._card_inserted_checkbox = QCheckBox("Card inserted")
+        self._card_inserted_checkbox.setChecked(False)
+        controls_layout.addWidget(self._card_inserted_checkbox)
+
+        card_label = QLabel("Card number:")
+        controls_layout.addWidget(card_label)
+
+        self._card_number_spinbox = QSpinBox()
+        self._card_number_spinbox.setRange(1, 255)
+        self._card_number_spinbox.setValue(1)
+        controls_layout.addWidget(self._card_number_spinbox)
+
+        # Spacer to push controls to the left
+        controls_layout.addStretch(1)
+
+        layout.addLayout(controls_layout)
+
+        # Wire UI controls to machine_state
+        self._card_inserted_checkbox.setChecked(bool(self.machine_state.card_inserted))
+        self._card_number_spinbox.setValue(int(self.machine_state.card_number))
+
+        self._card_inserted_checkbox.toggled.connect(self._on_card_inserted_toggled)
+        self._card_number_spinbox.valueChanged.connect(self._on_card_number_changed)
+
         self._tab_widget = QTabWidget()
 
         self._tab_9mm = CardSpaceTab(self.machine_state.card_9mm)
@@ -219,3 +249,13 @@ class CardMemoryTab(QWidget):
         self._tab_9mm.update_space(machine_state.card_9mm)
         self._tab_maxi.update_space(machine_state.card_maxi)
         self._tab_embroidery.update_space(machine_state.card_embroidery)
+
+    def _on_card_inserted_toggled(self, checked: bool):
+        """Handler for the 'Card inserted' checkbox toggled signal."""
+        if self.machine_state is not None:
+            self.machine_state.card_inserted = bool(checked)
+
+    def _on_card_number_changed(self, val: int):
+        """Handler for the card number spinbox valueChanged signal."""
+        if self.machine_state is not None:
+            self.machine_state.card_number = int(val)
