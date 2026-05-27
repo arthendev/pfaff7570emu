@@ -284,28 +284,28 @@ class PFAFFProtocol:
                 if byte == self.CTRL_ETX:
                     response.extend(self._handle_read_card_preview())
                 elif byte == self.CTRL_EOT:
-                    logger.info("KB: EOT received waiting for ETX - resetting to idle")
+                    logger.info("Read Memory Card preview: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
                     self._kb_params_buffer = bytearray()
                 else:
-                    logger.warning(f"KB: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+                    logger.warning(f"Read Memory Card preview: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
             elif self._state == self._STATE_READ_KB_WAIT_ACK:
                 if byte == self.CTRL_EOT:
-                    logger.info("KB preview: EOT received - aborting transfer")
+                    logger.info("Read Memory Card preview: EOT received - aborting transfer")
                     self._abort_read_kb()
                 elif byte == self.CTRL_ACK:
                     if self._kb_preview_offset >= len(self._kb_preview_data):
-                        logger.info("KB preview: transfer complete, sending CTRL_ETX")
+                        logger.info("Read Memory Card preview: transfer complete, sending CTRL_ETX")
                         self._abort_read_kb()
                         response.append(self.CTRL_ETX)
                     else:
                         response.extend(self._send_next_kb_chunk())
                 elif byte == self.CTRL_NAK:
-                    logger.warning("KB preview: NAK received - aborting transfer")
+                    logger.warning("Read Memory Card preview: NAK received - aborting transfer")
                     self._abort_read_kb()
                 else:
-                    logger.warning(f"KB preview: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
+                    logger.warning(f"Read Memory Card preview: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
 
             elif self._state == self._STATE_READ_KS_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
@@ -317,28 +317,28 @@ class PFAFFProtocol:
                 if byte == self.CTRL_ETX:
                     response.extend(self._handle_read_card_slot())
                 elif byte == self.CTRL_EOT:
-                    logger.info("KS: EOT received waiting for ETX - resetting to idle")
+                    logger.info("Read Memory Card slot: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
                     self._ks_params_buffer = bytearray()
                 else:
-                    logger.warning(f"KS: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+                    logger.warning(f"Read Memory Card slot: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
             elif self._state == self._STATE_READ_KS_WAIT_ACK:
                 if byte == self.CTRL_EOT:
-                    logger.info("KS: EOT received - aborting transfer")
+                    logger.info("Read Memory Card slot: EOT received - aborting transfer")
                     self._abort_read_ks()
                 elif byte == self.CTRL_ACK:
                     if self._ks_offset >= len(self._ks_pattern_data):
-                        logger.info("KS: transfer complete, sending CTRL_ETX")
+                        logger.info("Read Memory Card slot: transfer complete, sending CTRL_ETX")
                         self._abort_read_ks()
                         response.append(self.CTRL_ETX)
                     else:
                         response.extend(self._send_next_ks_chunk())
                 elif byte == self.CTRL_NAK:
-                    logger.warning("KS: NAK received - aborting transfer")
+                    logger.warning("Read Memory Card slot: NAK received - aborting transfer")
                     self._abort_read_ks()
                 else:
-                    logger.warning(f"KS: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
+                    logger.warning(f"Read Memory Card slot: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
 
             elif self._state == self._STATE_READ_KL_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
@@ -350,32 +350,32 @@ class PFAFFProtocol:
                 if byte == self.CTRL_ETX:
                     response.extend(self._handle_delete_card_slot())
                 elif byte == self.CTRL_EOT:
-                    logger.info("KL: EOT received waiting for ETX - resetting to idle")
+                    logger.info("Delete Memory Card slot: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
                     self._kl_params_buffer = bytearray()
                 else:
-                    logger.warning(f"KL: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
+                    logger.warning(f"Delete Memory Card slot: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
             elif self._state == self._STATE_WRITE_CARD_WAIT_ETX:
                 if byte == self.CTRL_ETX:
                     response.extend(self._process_write_card_header())
                 elif byte == self.CTRL_EOT:
-                    logger.info("KN: EOT received waiting for header CTRL_ETX - aborting")
+                    logger.info("Write Memory Card slot: EOT received waiting for header CTRL_ETX - aborting")
                     self._abort_write_card()
                 else:
-                    logger.warning(f"KN: unexpected byte 0x{byte:02X} waiting for header CTRL_ETX - aborting")
+                    logger.warning(f"Write Memory Card slot: unexpected byte 0x{byte:02X} waiting for header CTRL_ETX - aborting")
                     self._abort_write_card()
 
             elif self._state == self._STATE_WRITE_CARD_WAIT_FINAL_ETX:
                 if byte == self.CTRL_ETX:
                     # Host signalled end of transfer — commit the accumulated data.
-                    logger.info("KN: final CTRL_ETX received — committing written card")
+                    logger.info("Write Memory Card slot: final CTRL_ETX received — committing written card")
                     self._commit_write_card()
                 elif byte == self.CTRL_EOT:
-                    logger.info("KN: EOT received waiting for final CTRL_ETX - aborting")
+                    logger.info("Write Memory Card slot: EOT received waiting for final CTRL_ETX - aborting")
                     self._abort_write_card()
                 else:
-                    logger.warning(f"KN: unexpected byte 0x{byte:02X} waiting for final CTRL_ETX - aborting")
+                    logger.warning(f"Write Memory Card slot: unexpected byte 0x{byte:02X} waiting for final CTRL_ETX - aborting")
                     self._abort_write_card()
 
             elif self._state == self._STATE_RAW_CMD_MNEMONIC:
@@ -560,26 +560,27 @@ class PFAFFProtocol:
         """Handle 'KI' + CTRL_ETX (List Memory Card content) command.
 
         Response format (raw bytes):
-          06 00 00 10 02 18 01 00 <N9mm> 03 C8 <NEmbr>
+          06 00 00 <CardNo> 18 01 00 <N9mm> 03 C8 <NEmbr>
           00 00 00 00 00 00 02 00 <NMaxi> 00 00 00 00 00 00 00 00 00 18
           + CTRL_ETB (raw byte) + checksum (2 raw bytes, 16-bit big-endian sum)
 
+        <CardNo> = card number, e.g. 0x10 0x02 is card no. 2 (machine translates it to 1002; probably to be above any off-shelf card)
         <N9mm>  = number of 9mm patterns on the card
         <NEmbr> = number of Embroidery patterns on the card
         <NMaxi> = number of MAXI patterns on the card
         Checksum is the 16-bit sum of all data bytes before CTRL_ETB.
         """
-        logger.info("List Card Memory command received - sending response")
+        logger.info("List Memory Card command received - sending response")
 
-        if self.machine_state is not None:
-            n_9mm  = len(self.machine_state.card_9mm.slots)
-            n_embr = len(self.machine_state.card_embroidery.slots)
-            n_maxi = len(self.machine_state.card_maxi.slots)
-        else:
-            n_9mm = n_embr = n_maxi = 0
+        card_no = self.machine_state.card_number
+        n_9mm  = len(self.machine_state.card_9mm.slots)
+        n_embr = len(self.machine_state.card_embroidery.slots)
+        n_maxi = len(self.machine_state.card_maxi.slots)
 
         raw_bytes = bytes([
-            0x00, 0x00, 0x10, 0x02, 0x18, 0x01, 0x00,
+            0x00, 0x00, 
+            0x10, card_no & 0xFF, 
+            0x18, 0x01, 0x00,
             n_9mm & 0xFF,
             0x03, 0xC8,
             n_embr & 0xFF,
@@ -606,7 +607,7 @@ class PFAFFProtocol:
         to collect 30 raw header bytes, followed by a CTRL_ETX terminator.
         Returns empty bytes (no immediate response — wait for header bytes).
         """
-        logger.info("Write Card Memory: KN command received - collecting 30-byte header")
+        logger.info("Write Memory Card command received - collecting 30-byte header")
         self._write_card_header_buffer = bytearray()
         self._write_card_header_raw = bytearray()
         self._write_card_stitch_type = None
@@ -655,11 +656,6 @@ class PFAFFProtocol:
         self._write_card_pattern_size = (buf[27] << 8) | buf[28]
         self._write_card_filename_len = buf[29]
         self._write_card_header_raw = bytes(buf)
-
-        if self.machine_state is None:
-            logger.warning("Write Card: no machine state available - aborting")
-            self._abort_write_card()
-            return bytes([self.CTRL_NAK])
 
         if self._write_card_stitch_type == "9mm":
             space = self.machine_state.card_9mm
@@ -880,13 +876,12 @@ class PFAFFProtocol:
         )
         slot.parse_pattern_data()  # no-op for hex-encoded raw binary; safe to call
 
-        if self.machine_state is not None:
-            if self._write_card_stitch_type == "9mm":
-                self.machine_state.card_9mm.set_slot(slot)
-            elif self._write_card_stitch_type == "MAXI":
-                self.machine_state.card_maxi.set_slot(slot)
-            else:
-                self.machine_state.card_embroidery.set_slot(slot)
+        if self._write_card_stitch_type == "9mm":
+            self.machine_state.card_9mm.set_slot(slot)
+        elif self._write_card_stitch_type == "MAXI":
+            self.machine_state.card_maxi.set_slot(slot)
+        else:
+            self.machine_state.card_embroidery.set_slot(slot)
 
         logger.info(
             f"Write Card: committed {self._write_card_stitch_type} slot {self._write_card_slot_id} "
@@ -1000,10 +995,6 @@ class PFAFFProtocol:
             logger.warning(f"Delete P-Memory: invalid slot hex {slot_hex!r}")
             return bytes([self.CTRL_NAK])
 
-        if self.machine_state is None:
-            logger.warning("Delete P-Memory: no machine state available")
-            return bytes([self.CTRL_NAK])
-
         try:
             slot = self.machine_state.get_p_memory_slot(slot_id)
         except IndexError:
@@ -1077,10 +1068,6 @@ class PFAFFProtocol:
             )
             return bytes([self.CTRL_NAK])
 
-        if self.machine_state is None:
-            logger.warning("Write P-Memory: no machine state available")
-            return bytes([self.CTRL_NAK])
-
         try:
             self.machine_state.get_p_memory_slot(slot_id)
         except IndexError:
@@ -1145,10 +1132,6 @@ class PFAFFProtocol:
                 f"Write P-Memory: checksum mismatch "
                 f"(received 0x{received_checksum:02X}, calculated 0x{calculated:02X})"
             )
-            return bytes([self.CTRL_NAK])
-
-        if self.machine_state is None:
-            logger.warning("Write P-Memory: no machine state available")
             return bytes([self.CTRL_NAK])
 
         try:
@@ -1274,10 +1257,6 @@ class PFAFFProtocol:
 
     def _commit_write(self) -> bytes:
         """Commit all accumulated data to the target P-Memory slot and return to idle."""
-        if self.machine_state is None:
-            logger.warning("Write P-Memory: no machine state on commit")
-            self._abort_write()
-            return bytes([])
 
         slot = self.machine_state.get_p_memory_slot(self._write_slot_id)
 
@@ -1360,7 +1339,8 @@ class PFAFFProtocol:
         """Handle KB command: read preview image from a card memory slot.
 
         Parameter bytes layout (8 raw bytes):
-          [0-3]  fixed: 00 00 10 02
+          [0-1]  fixed: 00 00
+          [2-3]  CARDNO: e.g. 10 02 for card number 2 (machine extends it to 1002, probably to avoid collision with any off-shelf card)
           [4]    BANK: 0xC0 = 9mm/Embroidery, 0xD0 = MAXI
           [5]    SLOT: raw slot byte (Embroidery adds 0xC8 offset, so 0xC8=slot0, 0xC9=slot1)
           [6]    TYPE: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
@@ -1378,8 +1358,15 @@ class PFAFFProtocol:
         After the final ACK (all preview bytes sent): respond with CTRL_ETX.
         """
         params = self._kb_params_buffer
+        card_no = params[3]
         type_byte = params[6]
         slot_raw  = params[5]
+
+        # Check if card number matches the inserted card
+        if self.machine_state.card_number != card_no:
+            logger.warning(f"Read Memory Card preview: card number mismatch (requested {card_no}, inserted {self.machine_state.card_number})")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
 
         if type_byte == 0x01:
             stitch_type = "9mm"
@@ -1394,25 +1381,20 @@ class PFAFFProtocol:
             space = self.machine_state.card_embroidery if self.machine_state else None
             slot_id = slot_raw - 0xC8
         else:
-            logger.warning(f"KB: unknown type byte 0x{type_byte:02X}")
-            self._state = self._STATE_IDLE
-            return bytes([self.CTRL_NAK])
-
-        if self.machine_state is None:
-            logger.warning("KB: no machine state available")
+            logger.warning(f"Read Memory Card preview: unknown type byte 0x{type_byte:02X}")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         slot = space.get_slot(slot_id)
         if slot is None:
-            logger.warning(f"KB: {stitch_type} slot {slot_id} not found")
+            logger.warning(f"Read Memory Card preview: {stitch_type} slot {slot_id} not found")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         try:
             preview_bytes = bytes.fromhex(slot.preview_raw) if slot.preview_raw else b""
         except ValueError:
-            logger.warning(f"KB: invalid preview_raw hex in {stitch_type} slot {slot_id} - using empty")
+            logger.warning(f"Read Memory Card preview: invalid preview_raw hex in {stitch_type} slot {slot_id} - using empty")
             preview_bytes = b""
 
         try:
@@ -1446,7 +1428,7 @@ class PFAFFProtocol:
 
         self._state = self._STATE_READ_KB_WAIT_ACK
         logger.info(
-            f"KB: {stitch_type} slot {slot_id}, preview={len(self._kb_preview_data)} B, "
+            f"Read Memory Card preview command received: card_no={card_no}, {stitch_type} slot {slot_id}, preview={len(self._kb_preview_data)} B, "
             f"pattern={pattern_size} B, filename={slot.filename!r} - sending first chunk ({chunk_size} B)"
         )
         return bytes(response)
@@ -1471,7 +1453,7 @@ class PFAFFProtocol:
 
         self._state = self._STATE_READ_KB_WAIT_ACK
         logger.debug(
-            f"KB preview: chunk {chunk_size} B, "
+            f"Read Memory Card preview: chunk {chunk_size} B, "
             f"offset {self._kb_preview_offset}/{len(self._kb_preview_data)}"
         )
         return bytes(response)
@@ -1483,8 +1465,15 @@ class PFAFFProtocol:
         Subsequent chunks start with CTRL_ENQ then size, payload, size, CTRL_ETB, checksum.
         """
         params = self._ks_params_buffer
+        card_no = params[3]
         type_byte = params[6]
         slot_raw = params[5]
+
+        # Check if card number matches the inserted card
+        if self.machine_state.card_number != card_no:
+            logger.warning(f"Read Memory Card preview: card number mismatch (requested {card_no}, inserted {self.machine_state.card_number})")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
 
         if type_byte == 0x01:
             stitch_type = "9mm"
@@ -1499,25 +1488,20 @@ class PFAFFProtocol:
             space = self.machine_state.card_embroidery if self.machine_state else None
             slot_id = slot_raw - 0xC8
         else:
-            logger.warning(f"KS: unknown type byte 0x{type_byte:02X}")
-            self._state = self._STATE_IDLE
-            return bytes([self.CTRL_NAK])
-
-        if self.machine_state is None:
-            logger.warning("KS: no machine state available")
+            logger.warning(f"Read Memory Card slot: unknown type byte 0x{type_byte:02X}")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         slot = space.get_slot(slot_id)
         if slot is None:
-            logger.warning(f"KS: {stitch_type} slot {slot_id} not found")
+            logger.warning(f"Read Memory Card slot: {stitch_type} slot {slot_id} not found")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         try:
             pattern_bytes = bytes.fromhex(slot.pattern_raw) if slot.pattern_raw else b""
         except ValueError:
-            logger.warning(f"KS: invalid pattern_raw hex in {stitch_type} slot {slot_id} - using empty")
+            logger.warning(f"Read Memory Card slot: invalid pattern_raw hex in {stitch_type} slot {slot_id} - using empty")
             pattern_bytes = b""
 
         self._ks_pattern_data = bytearray(pattern_bytes)
@@ -1540,7 +1524,7 @@ class PFAFFProtocol:
 
         self._state = self._STATE_READ_KS_WAIT_ACK
         logger.info(
-            f"KS: {stitch_type} slot {slot_id}, pattern={len(self._ks_pattern_data)} B - sending first chunk ({chunk_size} B)"
+            f"Read Memory Card command received: card_no={card_no}, {stitch_type} slot {slot_id}, pattern={len(self._ks_pattern_data)} B - sending first chunk ({chunk_size} B)"
         )
         return bytes(response)
 
@@ -1575,7 +1559,8 @@ class PFAFFProtocol:
         """Handle KL command: delete a slot from card memory.
 
         Parameter bytes layout (7 raw bytes):
-          [0-3]  fixed: 00 00 10 02
+          [0-1]  fixed: 00 00
+          [2-3]  CARDNO: e.g. 10 02 for card number 2 (machine extends it to 1002, probably to avoid collision with any off-shelf card)
           [4]    BANK: 0xC0 = 9mm/Embroidery, 0xD0 = MAXI
           [5]    SLOT: raw slot byte (Embroidery adds 0xC8 offset, so 0xC8=slot0, 0xC9=slot1)
           [6]    TYPE: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
@@ -1583,8 +1568,15 @@ class PFAFFProtocol:
         Response: CTRL_ACK on success, CTRL_NAK on error.
         """
         params = self._kl_params_buffer
+        card_no = params[3]
         type_byte = params[6]
         slot_raw  = params[5]
+
+        # Check if card number matches the inserted card
+        if self.machine_state.card_number != card_no:
+            logger.warning(f"Delete Memory Card slot: card number mismatch (requested {card_no}, inserted {self.machine_state.card_number})")
+            self._state = self._STATE_IDLE
+            return bytes([self.CTRL_NAK])
 
         if type_byte == 0x01:
             stitch_type = "9mm"
@@ -1599,22 +1591,17 @@ class PFAFFProtocol:
             space = self.machine_state.card_embroidery if self.machine_state else None
             slot_id = slot_raw - 0xC8
         else:
-            logger.warning(f"KL: unknown type byte 0x{type_byte:02X} - NAK")
-            self._state = self._STATE_IDLE
-            return bytes([self.CTRL_NAK])
-
-        if self.machine_state is None:
-            logger.warning("KL: no machine state available - NAK")
+            logger.warning(f"Delete Memory Card slot: unknown type byte 0x{type_byte:02X} - NAK")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         if space.get_slot(slot_id) is None:
-            logger.warning(f"KL: {stitch_type} slot {slot_id} not found - NAK")
+            logger.warning(f"Delete Memory Card slot: {stitch_type} slot {slot_id} not found - NAK")
             self._state = self._STATE_IDLE
             return bytes([self.CTRL_NAK])
 
         space.delete_slot(slot_id)
-        logger.info(f"KL: deleted {stitch_type} slot {slot_id}")
+        logger.info(f"Delete Memory Card slot: deleted {stitch_type} slot {slot_id}")
 
         if self.on_card_changed:
             self.on_card_changed()
@@ -1651,10 +1638,6 @@ class PFAFFProtocol:
             slot_id = int(slot_hex, 16)
         except ValueError:
             logger.warning(f"Read P-Memory: invalid slot hex {slot_hex!r}")
-            return bytes([self.CTRL_NAK])
-
-        if self.machine_state is None:
-            logger.warning("Read P-Memory: no machine state available")
             return bytes([self.CTRL_NAK])
 
         try:
