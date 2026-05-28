@@ -562,13 +562,13 @@ class PFAFFProtocol:
         Response format (raw bytes):
           06 00 00 <CardNo> 18 01 00 <N9mm> 03 C8 <NEmbr>
           00 00 00 00 00 00 02 00 <NMaxi> 00 00 00 00 00 00 00 00 00 18
-          + CTRL_ETB (raw byte) + checksum (2 raw bytes, 16-bit big-endian sum)
+          + CTRL_ETB (raw byte) + checksum
 
         <CardNo> = card number, e.g. 0x10 0x02 is card no. 2 (machine translates it to 1002; probably to be above any off-shelf card)
         <N9mm>  = number of 9mm patterns on the card
         <NEmbr> = number of Embroidery patterns on the card
         <NMaxi> = number of MAXI patterns on the card
-        Checksum is the 16-bit sum of all data bytes before CTRL_ETB.
+        Checksum is the 8-bit sum of all data bytes before CTRL_ETB, encoded as 2 ASCII hex chars.
         """
         logger.info("List Memory Card command received - sending response")
 
