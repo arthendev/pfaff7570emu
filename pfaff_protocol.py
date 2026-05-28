@@ -577,16 +577,34 @@ class PFAFFProtocol:
         n_embr = len(self.machine_state.card_embroidery.slots)
         n_maxi = len(self.machine_state.card_maxi.slots)
 
+        if n_9mm:
+            bytes_9mm = bytes([0x01, 0x00, n_9mm & 0xFF])
+        else:
+            bytes_9mm = bytes([0x00, 0x00, 0x00])
+
+        if n_embr:
+            bytes_embr = bytes([0x03, 0xC8, n_embr & 0xFF])
+        else:
+            bytes_embr = bytes([0x00, 0x00, 0x00])
+
+        if n_maxi:
+            bytes_maxi = bytes([0x02, 0x00, n_maxi & 0xFF])
+        else:
+            bytes_maxi = bytes([0x00, 0x00, 0x00])
+
         raw_bytes = bytes([
             0x00, 0x00, 
             0x10, card_no & 0xFF, 
-            0x18, 0x01, 0x00,
-            n_9mm & 0xFF,
-            0x03, 0xC8,
-            n_embr & 0xFF,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00,
-            n_maxi & 0xFF,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+            0x18, # size of payload (0x18 = 24 bytes following this count byte)
+            bytes_9mm[0], bytes_9mm[1], bytes_9mm[2],
+            bytes_embr[0], bytes_embr[1], bytes_embr[2],
+            0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+            bytes_maxi[0], bytes_maxi[1], bytes_maxi[2],
+            0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+            0x18, # size of payload (repeated count byte at end)
         ])
 
         checksum = self._calculate_checksum(raw_bytes)
