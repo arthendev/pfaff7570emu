@@ -1367,11 +1367,11 @@ class PFAFFProtocol:
         First response chunk:
           CTRL_ACK | 00 00 00 00 | <pattern_size 2 bytes BE> | <fn_len_byte>
           | <filename+NUL> | <chunk_size> | <preview_bytes> | <chunk_size> | CTRL_ETB
-          | <checksum 2 bytes BE (sum of preview payload)>
+          | <checksum>
 
         Subsequent chunks (sent after each ACK while preview remains):
           CTRL_ENQ | <chunk_size> | <preview_bytes> | <chunk_size> | CTRL_ETB
-          | <checksum 2 bytes BE>
+          | <checksum>
 
         After the final ACK (all preview bytes sent): respond with CTRL_ETX.
         """
