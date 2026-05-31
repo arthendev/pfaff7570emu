@@ -742,7 +742,7 @@ class PFAFFProtocol:
                 self._write_card_chunk_checksum_buf = bytearray()
                 self._write_card_data_substate = self._CARD_CHUNK_WAIT_SIZE
             else:
-                # Chunk starts directly with size byte (missing CTRL_ENQ) — will be NAK'd
+                # Chunk starts directly with size byte (missing CTRL_ENQ)
                 self._write_card_chunk_has_enq = False
                 self._write_card_chunk_size = byte
                 self._write_card_chunk_buffer = bytearray()
@@ -820,10 +820,12 @@ class PFAFFProtocol:
             )
             return bytes([self.CTRL_NAK])
 
+        # Chunks without a leading CTRL_ENQ have anyway incorrect checksum. Why?
+        #if not has_enq:
+        #    logger.warning("Write Card: chunk missing leading CTRL_ENQ")
+        #    return bytes([self.CTRL_NAK])
 
-        if not has_enq:
-            logger.warning("Write Card: chunk missing leading CTRL_ENQ")
-            return bytes([self.CTRL_NAK])
+
         # concatenate size, payload, and size repeat for checksum calculation
         data_for_checksum = bytes([size]) + payload + bytes([size_rep])
         calculated = self._calculate_checksum(data_for_checksum)
