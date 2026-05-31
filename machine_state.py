@@ -307,8 +307,8 @@ class CardMemorySlot:
     def parse_pattern_data(self) -> None:
         """Parse pattern_raw into pattern_bytes and pattern_xy.
 
-        9mm:  groups of 5 chars — 3-digit x + 2-digit y
-        MAXI: groups of 7 chars — 3-digit x + 2-digit y + sign char + 1-digit side transport
+        9mm:  groups of 2 bytes — dx (with 0x5B offset) and y absolute
+        MAXI: groups of 3 bytes — dy_acc transport (with 0xC6 offset), dx (with 0x5B offset), and y absolute;
         Embroidery (Small hoop / Large hoop): format unknown, no parsing yet.
         """
         pattern_bytes: List[int] = []
