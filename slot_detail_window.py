@@ -292,28 +292,28 @@ class SlotDetailWindow(QDialog):
 
         if self.slot.pattern_type == "9mm":
             mapping = {
-                0: ("y_min", "min(ys)"),
-                1: ("y_max", "max(ys)"),
-                2: ("dx_abs_max", "max(abs(dxs))"),
-                5: (None, "Unknown"),
-                6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),# two-byte H[6-7]
-                8: ("pn_x", "xs[end]"),                    # two-byte H[8-9]
-                10: ("span_x", "max(xs) - min(xs)"),       # two-byte H[10-11]
-                12: ("y_min_to_bound", "0x36 - min(ys)"),  # two-byte H[12-13]
-                14: ("span_y", "max(ys) - min(ys)"),       # two-byte H[14-15]
+                0: ("y_min",            "min(ys)"),
+                1: ("y_max",            "max(ys)"),
+                2: ("dx_abs_max",       "max(abs(dxs))"),
+                5: ("long_scale",       "Unknown"),              # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
+                6: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"), # two-byte H[6-7]
+                8: ("pn_x",             "xs[end]"),              # two-byte H[8-9]
+                10: ("span_x",          "max(xs) - min(xs)"),    # two-byte H[10-11]
+                12: ("y_min_to_bound",  "0x36 - min(ys)"),       # two-byte H[12-13]
+                14: ("span_y",          "max(ys) - min(ys)"),    # two-byte H[14-15]
             }
         else:
             mapping = {
-                0: ("y_min_norm", "min(ys)"),
+                0: ("y_min_norm",       "min(ys)"),
                 1: ("y_max_norm_div_2", "max(ys)//2"),
-                2: ("dx_abs_max", "max(abs(dxs))"),
-                5: (None, "Unknown"),
-                6: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),# two-byte H[6-7]
-                8: ("pn_x", "xs[end]"),                    # two-byte H[8-9]
-                10: ("span_x", "max(xs) - min(xs)"),       # two-byte H[10-11]
-                12: ("y_min_to_bound", "0x36 - min(ys)"),  # two-byte H[12-13]
-                14: ("span_y", "max(ys) - min(ys)"),       # two-byte H[14-15]
-                16: ("dy_0n", "ys[end] - ys[0]"),          # two-byte H[16-17]
+                2: ("dx_abs_max",       "max(abs(dxs))"),
+                5: ("long_scale",       "Unknown"),              # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
+                6: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"), # two-byte H[6-7]
+                8: ("pn_x",             "xs[end]"),              # two-byte H[8-9]
+                10: ("span_x",          "max(xs) - min(xs)"),    # two-byte H[10-11]
+                12: ("y_min_to_bound",  "0x36 - min(ys)"),       # two-byte H[12-13]
+                14: ("span_y",          "max(ys) - min(ys)"),    # two-byte H[14-15]
+                16: ("dy_0n",           "ys[end] - ys[0]"),      # two-byte H[16-17]
             }
 
         two_byte_pairs = {6: 7, 8: 9, 10: 11, 12: 13, 14: 15, 16: 17}
@@ -462,14 +462,14 @@ class SlotDetailWindow(QDialog):
                 0: ("y_min",      "min(ys)"),
                 1: ("y_max",      "max(ys)"),
                 2: ("dx_abs_max", "max(abs(dxs))"),
-                3: (None,         "Unknown"),
+                3: ("long_scale", "Longitudinal scaling"), # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
             }
         else:
             mapping = {
                 0: ("y_min_norm", "min(ys)"),
                 1: ("y_max_norm", "max(ys)"),
                 2: (None,         "Unknown"),
-                3: (None,         "Unknown"),
+                3: ("long_scale", "Longitudinal scaling"), # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
             }
 
         mono = QFont("Courier New", 9)

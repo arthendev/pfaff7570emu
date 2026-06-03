@@ -321,7 +321,7 @@ class CardSlotDetailWindow(QDialog):
                 13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
                 15: ("span_y",          "max(ys) - min(ys)"),         # DONE
                 17: ("fix_0x00",        "Fixed byte?"),               # DONE
-                19: (None,              "Unknown"),                   # DONE (unknown/scaling)
+                19: ("long_scale",      "Unknown"),                   # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
                 20: ("fix_0x00",        "Fixed byte?"),               # DONE
                 22: ("y_min_symmetry",  "min(ys) with extra logic"),  # DONE
                 23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
@@ -345,7 +345,7 @@ class CardSlotDetailWindow(QDialog):
                 13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
                 15: ("span_y",          "max(ys) - min(ys)"),         # DONE
                 17: ("dy_0n",           "ys[n]-ys[0]"),               # DONE
-                19: (None,              "Unknown"),                   # DONE (unknown/scaling)
+                19: ("long_scale",      "Unknown"),                # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
                 20: ("y_min_neg",       "-min(ys)"),                  # DONE; see comment below (1)
                 22: ("fix_0x00",        "Fixed byte?"),               # DONE
                 23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
