@@ -96,7 +96,7 @@ class SerialHandler(QObject):
         
         try:
             self.serial_port.write(data)
-            logger.debug(f"Sent {len(data)} bytes")
+            # logger.debug(f"Sent {len(data)} bytes")
             return True
         except Exception as e:
             error_msg = f"Error sending data: {str(e)}"
@@ -129,8 +129,8 @@ class SerialHandler(QObject):
                     data += self.serial_port.read(remaining)
 
                 if data:
+                    # logger.debug(f"Received {len(data)} bytes")
                     self.data_received.emit(data)
-                    logger.debug(f"Received {len(data)} bytes")
 
             except Exception as e:
                 if self.running:
