@@ -39,20 +39,21 @@ class CardSlotDetailWindow(QDialog):
     """Non-modal window showing detailed information about a memory card slot."""
 
     def __init__(self, slots: list, slot_id: int, on_clear=None, on_navigate=None,
-                 machine_model: str = None, parent=None):
+                 machine_model: str = None, card_no=None, parent=None):
         super().__init__(parent)
         self._slots = slots
         self.slot = slots[slot_id]
         self._on_clear_callback = on_clear
         self._on_navigate = on_navigate
         self._machine_model = machine_model or ""
+        self.card_no = card_no
         # Do not display numeric slot IDs — title uses filename when available
         title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
         self.setWindowTitle(title)
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(720)
-        self.setMinimumHeight(840)
+        self.setMinimumHeight(860)
         self._setup_ui()
         self._load_slot()
 
@@ -311,7 +312,7 @@ class CardSlotDetailWindow(QDialog):
                 0: ("fix_0x00",         "Fixed byte?"),               # DONE
                 1: ("fix_0x00",         "Fixed byte?"),               # DONE
                 2: ("fix_0x10",         "Fixed byte?"),               # DONE
-                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
                 4: ("fix_0xC0",         "Fixed byte?"),               # DONE
                 5: ("fix_0x00",         "Fixed byte?"),               # DONE
                 6: ("type",             "Pattern type"),              # DONE
@@ -335,7 +336,7 @@ class CardSlotDetailWindow(QDialog):
                 0: ("fix_0x00",         "Fixed byte?"),               # DONE
                 1: ("fix_0x00",         "Fixed byte?"),               # DONE
                 2: ("fix_0x10",         "Fixed byte?"),               # DONE
-                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
                 4: ("fix_0xC0",         "Fixed byte?"),               # DONE
                 5: ("fix_0x00",         "Fixed byte?"),               # DONE
                 6: ("type",             "Pattern type"),              # DONE
@@ -368,7 +369,7 @@ class CardSlotDetailWindow(QDialog):
             mapping = {
                 1: ("fix_0x00",         "Fixed byte?"),               # DONE
                 2: ("fix_0x10",         "Fixed byte?"),               # DONE
-                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
                 4: ("fix_0xC0",         "Fixed byte?"),               # DONE
                 5: ("fix_0x00",         "Fixed byte?"),               # DONE
                 6: ("type",             "Pattern type"),              # DONE
@@ -387,7 +388,7 @@ class CardSlotDetailWindow(QDialog):
         card_expect = {
             'fix_0x00': 0x00,
             'fix_0x10': 0x10,
-            'fix_0x02': 0x02,
+            'card_no': self.card_no,
             'fix_0xC0': 0xC0,
             'type': type_map.get(ptype, None),
             'fix_0x01': 0x01,

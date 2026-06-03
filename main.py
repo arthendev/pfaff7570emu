@@ -597,7 +597,8 @@ class PfaffCreativeEmulator(QMainWindow):
 
             win = CardSlotDetailWindow(slots_list, idx, on_clear=on_clear,
                                        on_navigate=on_navigate,
-                                       machine_model=self.machine_state.machine_model, parent=self)
+                                       machine_model=self.machine_state.machine_model, 
+                                       card_no=self.machine_state.card_number, parent=self)
             win.destroyed.connect(lambda: [
                 self._slot_detail_windows.pop(k, None)
                 for k, v in list(self._slot_detail_windows.items()) if v is win
@@ -791,9 +792,13 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""
+        # byte_hex_str = ' '.join(f'{b:02X}' for b in data)
+        # logger.debug(f"Serial RX ({len(data)} bytes): {byte_hex_str}")
         logger.debug(f"Serial RX ({len(data)} bytes): {data.hex()}")
         response = self.protocol.process_incoming(data)
         if response:
+            # response_byte_hex_str = ' '.join(f'{b:02X}' for b in response)
+            # logger.debug(f"Serial TX ({len(response)} bytes): {response_byte_hex_str}")
             logger.debug(f"Serial TX ({len(response)} bytes): {response.hex()}")
             self.serial_handler.send_data(response)
     
