@@ -79,6 +79,7 @@ class PFAFFProtocol:
 
     READ_CHUNK_SIZE_PMEM_9MM = 250
     READ_CHUNK_SIZE_PMEM_MAXI = 350
+    READ_CHUNK_SIZE_CARD = 0x80  # 128 bytes per chunk for card read operations (KB and KS)
 
     # Bell identification strings per model
     MODEL_BELL_STRINGS = {
@@ -135,17 +136,17 @@ class PFAFFProtocol:
         self._write_card_chunk_checksum_buf = bytearray()
 
         # Read Card Preview (KB) state machine
-        self._kb_params_buffer = bytearray()
-        self._kb_preview_data = bytearray()
-        self._kb_preview_offset = 0
+        self._read_card_preview_params_buffer = bytearray()
+        self._read_card_preview_data = bytearray()
+        self._read_card_preview_offset = 0
 
         # Read Card Slot (KS) state machine
-        self._ks_params_buffer = bytearray()
-        self._ks_pattern_data = bytearray()
-        self._ks_offset = 0
+        self._read_card_slot_params_buffer = bytearray()
+        self._read_card_slot_pattern_data = bytearray()
+        self._read_card_slot_offset = 0
 
         # Delete Card Slot (KL) state machine
-        self._kl_params_buffer = bytearray()
+        self._delete_card_params_buffer = bytearray()
 
         # Raw command mnemonic collection (KN, KB, KL — preceded by CTRL_ETX)
         self._raw_cmd_mnemonic_buffer = bytearray()
@@ -209,34 +210,34 @@ class PFAFFProtocol:
             elif self._state == self._STATE_READ_WAIT_ACK:
                 if byte == self.CTRL_EOT:
                     logger.info("EOT received while waiting for read ACK - resetting to idle")
-                    self._abort_read()
+                    self._abort_read_pmemory()
                 elif byte == self.CTRL_ACK:
                     if self._read_last_chunk_sent:
                         logger.info("Read P-Memory: transfer complete (ACK received) - resetting to idle")
-                        self._abort_read()
+                        self._abort_read_pmemory()
                     else:
-                        response.extend(self._send_next_read_chunk())
+                        response.extend(self._send_next_read_pmemory_chunk())
                 elif byte == self.CTRL_NAK:
                     logger.warning("Read P-Memory: NAK received, aborting")
-                    self._abort_read()
+                    self._abort_read_pmemory()
                 else:
                     logger.warning(f"Read P-Memory: unexpected byte 0x{byte:02X} while waiting for ACK")
 
             elif self._state == self._STATE_WRITE_DATA:
                 if byte == self.CTRL_EOT:
                     logger.info("EOT received during write data - resetting to idle")
-                    self._abort_write()
+                    self._abort_write_pmemory()
                 elif byte == self.CTRL_BEL:
                     logger.warning("Write P-Memory: aborted by CTRL_BEL")
-                    self._abort_write()
+                    self._abort_write_pmemory()
                     response.extend(self.handle_bell_command())
                 elif byte == self.CTRL_ETX:
                     # CTRL_ETX after a completed chunk checksum signals end of all chunks
                     if self._write_chunk_buffer:
                         logger.warning("Write P-Memory: unexpected CTRL_ETX mid-chunk - aborting")
-                        self._abort_write()
+                        self._abort_write_pmemory()
                     else:
-                        response.extend(self._commit_write())
+                        response.extend(self._commit_write_pmemory())
                 elif byte == self.CTRL_ETB:
                     self._write_checksum_chars = bytearray()
                     self._state = self._STATE_WRITE_CHECKSUM
@@ -246,22 +247,22 @@ class PFAFFProtocol:
             elif self._state == self._STATE_WRITE_CHECKSUM:
                 if byte == self.CTRL_EOT:
                     logger.info("EOT received during write checksum - resetting to idle")
-                    self._abort_write()
+                    self._abort_write_pmemory()
                 else:
                     self._write_checksum_chars.append(byte)
                     if len(self._write_checksum_chars) == 2:
-                        response.extend(self._process_write_chunk())
+                        response.extend(self._process_write_pmemory_chunk())
 
             elif self._state == self._STATE_WRITE_HEADER:
                 if byte == self.CTRL_EOT:
                     logger.info("CTRL_EOT received during write header - resetting to idle")
-                    self._abort_write()
+                    self._abort_write_pmemory()
                 elif byte == self.CTRL_BEL:
                     logger.warning("Write P-Memory: header aborted by CTRL_BEL")
-                    self._abort_write()
+                    self._abort_write_pmemory()
                     response.extend(self.handle_bell_command())
                 elif byte == self.CTRL_ETX:
-                    response.extend(self._process_write_header())
+                    response.extend(self._process_write_pmemory_header())
                 else:
                     self._write_header_buffer.append(byte)
 
@@ -273,12 +274,12 @@ class PFAFFProtocol:
                     self._state = self._STATE_WRITE_CARD_WAIT_ETX
 
             elif self._state == self._STATE_WRITE_CARD_DATA:
-                response.extend(self._handle_card_data_byte(byte))
+                response.extend(self._handle_write_card_data_byte(byte))
 
             elif self._state == self._STATE_READ_KB_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
-                self._kb_params_buffer.append(byte)
-                if len(self._kb_params_buffer) == 8:
+                self._read_card_preview_params_buffer.append(byte)
+                if len(self._read_card_preview_params_buffer) == 8:
                     self._state = self._STATE_READ_KB_WAIT_ETX
 
             elif self._state == self._STATE_READ_KB_WAIT_ETX:
@@ -287,31 +288,31 @@ class PFAFFProtocol:
                 elif byte == self.CTRL_EOT:
                     logger.info("Read Card Preview: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
-                    self._kb_params_buffer = bytearray()
+                    self._read_card_preview_params_buffer = bytearray()
                 else:
                     logger.warning(f"Read Card Preview: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
             elif self._state == self._STATE_READ_KB_WAIT_ACK:
                 if byte == self.CTRL_EOT:
                     logger.info("Read Card Preview: EOT received - aborting transfer")
-                    self._abort_read_kb()
+                    self._abort_read_card_preview()
                 elif byte == self.CTRL_ACK:
-                    if self._kb_preview_offset >= len(self._kb_preview_data):
+                    if self._read_card_preview_offset >= len(self._read_card_preview_data):
                         logger.info("Read Card Preview: transfer complete, sending CTRL_ETX")
-                        self._abort_read_kb()
+                        self._abort_read_card_preview()
                         response.append(self.CTRL_ETX)
                     else:
-                        response.extend(self._send_next_kb_chunk())
+                        response.extend(self._send_next_card_preview_chunk())
                 elif byte == self.CTRL_NAK:
                     logger.warning("Read Card Preview: NAK received - aborting transfer")
-                    self._abort_read_kb()
+                    self._abort_read_card_preview()
                 else:
                     logger.warning(f"Read Card Preview: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
 
             elif self._state == self._STATE_READ_KS_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
-                self._ks_params_buffer.append(byte)
-                if len(self._ks_params_buffer) == 7:
+                self._read_card_slot_params_buffer.append(byte)
+                if len(self._read_card_slot_params_buffer) == 7:
                     self._state = self._STATE_READ_KS_WAIT_ETX
 
             elif self._state == self._STATE_READ_KS_WAIT_ETX:
@@ -320,31 +321,31 @@ class PFAFFProtocol:
                 elif byte == self.CTRL_EOT:
                     logger.info("Read Card Pattern: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
-                    self._ks_params_buffer = bytearray()
+                    self._read_card_slot_params_buffer = bytearray()
                 else:
                     logger.warning(f"Read Card Pattern: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
             elif self._state == self._STATE_READ_KS_WAIT_ACK:
                 if byte == self.CTRL_EOT:
                     logger.info("Read Card Pattern: EOT received - aborting transfer")
-                    self._abort_read_ks()
+                    self._abort_read_card()
                 elif byte == self.CTRL_ACK:
-                    if self._ks_offset >= len(self._ks_pattern_data):
+                    if self._read_card_slot_offset >= len(self._read_card_slot_pattern_data):
                         logger.info("Read Card Pattern: transfer complete, sending CTRL_ETX")
-                        self._abort_read_ks()
+                        self._abort_read_card()
                         response.append(self.CTRL_ETX)
                     else:
-                        response.extend(self._send_next_ks_chunk())
+                        response.extend(self._send_next_card_slot_chunk())
                 elif byte == self.CTRL_NAK:
                     logger.warning("Read Card Pattern: NAK received - aborting transfer")
-                    self._abort_read_ks()
+                    self._abort_read_card()
                 else:
                     logger.warning(f"Read Card Pattern: unexpected byte 0x{byte:02X} waiting for ACK - ignored")
 
             elif self._state == self._STATE_READ_KL_PARAMS:
                 # Accept any byte value (including control characters) as raw parameter
-                self._kl_params_buffer.append(byte)
-                if len(self._kl_params_buffer) == 7:
+                self._delete_card_params_buffer.append(byte)
+                if len(self._delete_card_params_buffer) == 7:
                     self._state = self._STATE_READ_KL_WAIT_ETX
 
             elif self._state == self._STATE_READ_KL_WAIT_ETX:
@@ -353,7 +354,7 @@ class PFAFFProtocol:
                 elif byte == self.CTRL_EOT:
                     logger.info("Delete Card: EOT received waiting for ETX - resetting to idle")
                     self._state = self._STATE_IDLE
-                    self._kl_params_buffer = bytearray()
+                    self._delete_card_params_buffer = bytearray()
                 else:
                     logger.warning(f"Delete Card: unexpected byte 0x{byte:02X} waiting for CTRL_ETX - ignored")
 
@@ -411,7 +412,7 @@ class PFAFFProtocol:
                                 response.extend(self._card_disabled_response())
                                 self._state = self._STATE_IDLE
                             else:
-                                self._kb_params_buffer = bytearray()
+                                self._read_card_preview_params_buffer = bytearray()
                                 self._state = self._STATE_READ_KB_PARAMS
                         elif mnemonic == self.CMD_READ_CARD_SLOT:
                             if not self._card_available():
@@ -419,7 +420,7 @@ class PFAFFProtocol:
                                 response.extend(self._card_disabled_response())
                                 self._state = self._STATE_IDLE
                             else:
-                                self._ks_params_buffer = bytearray()
+                                self._read_card_slot_params_buffer = bytearray()
                                 self._state = self._STATE_READ_KS_PARAMS
                         elif mnemonic == self.CMD_DELETE_CARD:
                             if not self._card_available():
@@ -427,7 +428,7 @@ class PFAFFProtocol:
                                 response.extend(self._card_disabled_response())
                                 self._state = self._STATE_IDLE
                             else:
-                                self._kl_params_buffer = bytearray()
+                                self._delete_card_params_buffer = bytearray()
                                 self._state = self._STATE_READ_KL_PARAMS
                         else:
                             logger.warning(f"Raw cmd: unknown mnemonic {mnemonic!r} - resetting to idle")
@@ -734,7 +735,7 @@ class PFAFFProtocol:
         self._write_card_chunk_buffer = bytearray()
         self._write_card_chunk_checksum_buf = bytearray()
 
-    def _handle_card_data_byte(self, byte: int) -> bytes:
+    def _handle_write_card_data_byte(self, byte: int) -> bytes:
         """Route one incoming byte through the card data chunk sub-state machine."""
         sub = self._write_card_data_substate
 
@@ -794,11 +795,11 @@ class PFAFFProtocol:
         if sub == self._CARD_CHUNK_CHECKSUM:
             self._write_card_chunk_checksum_buf.append(byte)
             if len(self._write_card_chunk_checksum_buf) == 2:
-                return self._process_card_chunk()
+                return self._process_write_card_chunk()
 
         return b""
 
-    def _process_card_chunk(self) -> bytes:
+    def _process_write_card_chunk(self) -> bytes:
         """Validate the completed chunk; ACK if valid, NAK and reset chunk if not.
 
         Validation rules (any failure → NAK, sub-state resets to WAIT_START for retransmit):
@@ -1032,7 +1033,7 @@ class PFAFFProtocol:
             self.on_pmemory_changed()
         return bytes([self.CTRL_ACK])
 
-    def _abort_write(self):
+    def _abort_write_pmemory(self):
         """Abort an in-progress P-Memory write and return to idle state."""
         self._state = self._STATE_IDLE
         self._write_slot_id = None
@@ -1187,7 +1188,7 @@ class PFAFFProtocol:
         logger.info(f"Write P-Memory: slot {slot_id}, expecting {expected_size} bytes pattern of type: {pattern_type_str} - requesting data")
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
-    def _process_write_header(self) -> bytes:
+    def _process_write_pmemory_header(self) -> bytes:
         """Verify checksum of the write header, store it, and transition to data collection.
 
         Header format: <header_data> + <2-char hex checksum> + CTRL_ETX
@@ -1198,7 +1199,7 @@ class PFAFFProtocol:
         buf = self._write_header_buffer
         if len(buf) < 2:
             logger.warning("Write P-Memory: header too short")
-            self._abort_write()
+            self._abort_write_pmemory()
             return bytes([self.CTRL_NAK])
 
         header_data    = buf[:-3]  # all bytes before the last 3 (CTRL_ETB + checksum)
@@ -1211,7 +1212,7 @@ class PFAFFProtocol:
             logger.warning(
                 f"Write P-Memory: invalid header checksum bytes {bytes(checksum_chars)!r}"
             )
-            self._abort_write()
+            self._abort_write_pmemory()
             return bytes([self.CTRL_NAK])
 
         calculated = self._calculate_checksum(header_data)
@@ -1220,7 +1221,7 @@ class PFAFFProtocol:
                 f"Write P-Memory: header checksum mismatch "
                 f"(received 0x{received_checksum:02X}, calculated 0x{calculated:02X})"
             )
-            self._abort_write()
+            self._abort_write_pmemory()
             return bytes([self.CTRL_NAK])
 
 
@@ -1251,7 +1252,7 @@ class PFAFFProtocol:
         self._state = self._STATE_WRITE_DATA
         return bytes([self.CTRL_ENQ])  # Using ENQ to indicate ready for data (ACK is used for chunk ACKs)
 
-    def _process_write_chunk(self) -> bytes:
+    def _process_write_pmemory_chunk(self) -> bytes:
         """Verify checksum of the current chunk, accumulate its data, and ACK or NAK."""
         try:
             received_checksum = int(self._write_checksum_chars.decode('ascii'), 16)
@@ -1259,7 +1260,7 @@ class PFAFFProtocol:
             logger.warning(
                 f"Write P-Memory: invalid chunk checksum bytes {bytes(self._write_checksum_chars)!r}"
             )
-            self._abort_write()
+            self._abort_write_pmemory()
             return bytes([self.CTRL_NAK])
 
         calculated = self._calculate_checksum(self._write_chunk_buffer)
@@ -1268,7 +1269,7 @@ class PFAFFProtocol:
                 f"Write P-Memory: chunk checksum mismatch "
                 f"(received 0x{received_checksum:02X}, calculated 0x{calculated:02X})"
             )
-            self._abort_write()
+            self._abort_write_pmemory()
             return bytes([self.CTRL_NAK])
 
         # Checksum OK - accumulate chunk and await more data or CTRL_ETX
@@ -1280,7 +1281,7 @@ class PFAFFProtocol:
         self._state = self._STATE_WRITE_DATA
         return bytes([self.CTRL_ACK])
 
-    def _commit_write(self) -> bytes:
+    def _commit_write_pmemory(self) -> bytes:
         """Commit all accumulated data to the target P-Memory slot and return to idle."""
 
         slot = self.machine_state.get_p_memory_slot(self._write_slot_id)
@@ -1303,7 +1304,7 @@ class PFAFFProtocol:
             logger.warning(f"Write P-Memory: unknown stitch type {self._write_stitch_type} on commit - storing raw data only ({slot.get_size_bytes()} bytes)")
 
         self._append_write_log(slot)
-        self._abort_write()  # resets state to IDLE
+        self._abort_write_pmemory()  # resets state to IDLE
         if self.on_pmemory_changed:
             self.on_pmemory_changed()
         return bytes([])
@@ -1346,19 +1347,19 @@ class PFAFFProtocol:
         except OSError as e:
             logger.warning(f"Write log: could not append to {log_path}: {e}")
 
-    def _abort_read(self):
+    def _abort_read_pmemory(self):
         """Abort an in-progress P-Memory read and return to idle state."""
         self._state = self._STATE_IDLE
         self._read_data = bytearray()
         self._read_offset = 0
         self._read_last_chunk_sent = False
 
-    def _abort_read_kb(self) -> None:
+    def _abort_read_card_preview(self) -> None:
         """Abort an in-progress KB card-preview read and return to idle state."""
         self._state = self._STATE_IDLE
-        self._kb_params_buffer = bytearray()
-        self._kb_preview_data = bytearray()
-        self._kb_preview_offset = 0
+        self._read_card_preview_params_buffer = bytearray()
+        self._read_card_preview_data = bytearray()
+        self._read_card_preview_offset = 0
 
     def _handle_read_card_preview(self) -> bytes:
         """Handle KB command: read preview image from a card memory slot.
@@ -1382,7 +1383,7 @@ class PFAFFProtocol:
 
         After the final ACK (all preview bytes sent): respond with CTRL_ETX.
         """
-        params = self._kb_params_buffer
+        params = self._read_card_preview_params_buffer
         card_no = params[3]
         type_byte = params[6]
         slot_raw  = params[5]
@@ -1430,12 +1431,12 @@ class PFAFFProtocol:
         filename_bytes = slot.filename.encode('ascii', errors='replace') + b'\x00'
         fn_len_byte = len(filename_bytes)  # length including null terminator
 
-        self._kb_preview_data = bytearray(preview_bytes)
-        self._kb_preview_offset = 0
+        self._read_card_preview_data = bytearray(preview_bytes)
+        self._read_card_preview_offset = 0
 
-        chunk_size = min(0x80, len(self._kb_preview_data))
-        chunk_data = bytes(self._kb_preview_data[:chunk_size])
-        self._kb_preview_offset = chunk_size
+        chunk_size = min(self.READ_CHUNK_SIZE_CARD, len(self._read_card_preview_data))
+        chunk_data = bytes(self._read_card_preview_data[:chunk_size])
+        self._read_card_preview_offset = chunk_size
 
         response = bytearray()
         response.append(self.CTRL_ACK)
@@ -1453,23 +1454,23 @@ class PFAFFProtocol:
 
         self._state = self._STATE_READ_KB_WAIT_ACK
         logger.info(
-            f"Read Card Preview command received: card_no={card_no}, {stitch_type} slot {slot_id}, preview={len(self._kb_preview_data)} B, "
+            f"Read Card Preview command received: card_no={card_no}, {stitch_type} slot {slot_id}, preview={len(self._read_card_preview_data)} B, "
             f"pattern={pattern_size} B, filename={slot.filename!r} - sending first chunk"
         )
         logger.info(
-            f"Read Card Preview: chunk {chunk_size} B, offset {0}/{len(self._kb_preview_data)}, checksum 0x{checksum:02X}"
+            f"Read Card Preview: chunk {chunk_size} B, offset {0}/{len(self._read_card_preview_data)}, checksum 0x{checksum:02X}"
         )
         return bytes(response)
 
-    def _send_next_kb_chunk(self) -> bytes:
+    def _send_next_card_preview_chunk(self) -> bytes:
         """Build and return the next KB preview chunk (starts with CTRL_ENQ)."""
-        remaining = len(self._kb_preview_data) - self._kb_preview_offset
-        chunk_size = min(0x80, remaining)
+        remaining = len(self._read_card_preview_data) - self._read_card_preview_offset
+        chunk_size = min(self.READ_CHUNK_SIZE_CARD, remaining)
         chunk_data = bytes(
-            self._kb_preview_data[self._kb_preview_offset : self._kb_preview_offset + chunk_size]
+            self._read_card_preview_data[self._read_card_preview_offset : self._read_card_preview_offset + chunk_size]
         )
-        chunk_offset = self._kb_preview_offset
-        self._kb_preview_offset += chunk_size
+        chunk_offset = self._read_card_preview_offset
+        self._read_card_preview_offset += chunk_size
 
         response = bytearray()
         response.append(self.CTRL_ENQ)
@@ -1483,7 +1484,7 @@ class PFAFFProtocol:
         self._state = self._STATE_READ_KB_WAIT_ACK
         logger.info(
             f"Read Card Preview: chunk {chunk_size} B, "
-            f"offset {chunk_offset}/{len(self._kb_preview_data)}, checksum 0x{checksum:02X}"
+            f"offset {chunk_offset}/{len(self._read_card_preview_data)}, checksum 0x{checksum:02X}"
         )
         return bytes(response)
 
@@ -1493,7 +1494,7 @@ class PFAFFProtocol:
         First chunk starts with CTRL_ACK then 00 00 00 00, then size, payload, size, CTRL_ETB, checksum.
         Subsequent chunks start with CTRL_ENQ then size, payload, size, CTRL_ETB, checksum.
         """
-        params = self._ks_params_buffer
+        params = self._read_card_slot_params_buffer
         card_no = params[3]
         type_byte = params[6]
         slot_raw = params[5]
@@ -1533,13 +1534,13 @@ class PFAFFProtocol:
             logger.warning(f"Read Card Pattern: invalid pattern_raw hex in {stitch_type} slot {slot_id} - using empty")
             pattern_bytes = b""
 
-        self._ks_pattern_data = bytearray(pattern_bytes)
-        self._ks_offset = 0
+        self._read_card_slot_pattern_data = bytearray(pattern_bytes)
+        self._read_card_slot_offset = 0
 
         # Build first chunk: CTRL_ACK + 00 00 00 00 + <size> + <payload> + <size> + CTRL_ETB + checksum(ascii)
-        chunk_size = min(0x80, len(self._ks_pattern_data) - self._ks_offset)
-        chunk_data = bytes(self._ks_pattern_data[:chunk_size])
-        self._ks_offset = chunk_size
+        chunk_size = min(self.READ_CHUNK_SIZE_CARD, len(self._read_card_slot_pattern_data) - self._read_card_slot_offset)
+        chunk_data = bytes(self._read_card_slot_pattern_data[:chunk_size])
+        self._read_card_slot_offset = chunk_size
 
         response = bytearray()
         response.append(self.CTRL_ACK)
@@ -1553,20 +1554,20 @@ class PFAFFProtocol:
 
         self._state = self._STATE_READ_KS_WAIT_ACK
         logger.info(
-            f"Read Card Pattern command received: card_no={card_no}, {stitch_type} slot {slot_id}, pattern={len(self._ks_pattern_data)} B - sending first chunk"
+            f"Read Card Pattern command received: card_no={card_no}, {stitch_type} slot {slot_id}, pattern={len(self._read_card_slot_pattern_data)} B - sending first chunk"
         )
-        logger.info(f"Read Card Pattern: chunk {chunk_size} B, offset {0}/{len(self._ks_pattern_data)}, checksum 0x{checksum:02X}")
+        logger.info(f"Read Card Pattern: chunk {chunk_size} B, offset {0}/{len(self._read_card_slot_pattern_data)}, checksum 0x{checksum:02X}")
         
         return bytes(response)
 
-    def _send_next_ks_chunk(self) -> bytes:
+    def _send_next_card_slot_chunk(self) -> bytes:
         """Build and return the next KS pattern chunk (starts with CTRL_ENQ)."""
-        remaining = len(self._ks_pattern_data) - self._ks_offset
-        chunk_size = min(0x80, remaining)
-        chunk_data = bytes(self._ks_pattern_data[self._ks_offset : self._ks_offset + chunk_size])
-        chunk_offset = self._ks_offset
+        remaining = len(self._read_card_slot_pattern_data) - self._read_card_slot_offset
+        chunk_size = min(self.READ_CHUNK_SIZE_CARD, remaining)
+        chunk_data = bytes(self._read_card_slot_pattern_data[self._read_card_slot_offset : self._read_card_slot_offset + chunk_size])
+        chunk_offset = self._read_card_slot_offset
 
-        self._ks_offset += chunk_size
+        self._read_card_slot_offset += chunk_size
 
         response = bytearray()
         response.append(self.CTRL_ENQ)
@@ -1577,17 +1578,17 @@ class PFAFFProtocol:
         response.append(self.CTRL_ETB)
         response.extend(f"{checksum:02X}".encode('ascii'))
 
-        logger.info(f"Read Card Pattern: chunk {chunk_size} B, offset {chunk_offset}/{len(self._ks_pattern_data)}, checksum 0x{checksum:02X}")
+        logger.info(f"Read Card Pattern: chunk {chunk_size} B, offset {chunk_offset}/{len(self._read_card_slot_pattern_data)}, checksum 0x{checksum:02X}")
         
         self._state = self._STATE_READ_KS_WAIT_ACK
         return bytes(response)
 
-    def _abort_read_ks(self) -> None:
-        """Abort an in-progress KS read and return to idle state."""
+    def _abort_read_card(self) -> None:
+        """Abort an in-progress card read and return to idle state."""
         self._state = self._STATE_IDLE
-        self._ks_params_buffer = bytearray()
-        self._ks_pattern_data = bytearray()
-        self._ks_offset = 0
+        self._read_card_slot_params_buffer = bytearray()
+        self._read_card_slot_pattern_data = bytearray()
+        self._read_card_slot_offset = 0
 
     def _handle_delete_card_slot(self) -> bytes:
         """Handle KL command: delete a slot from card memory.
@@ -1601,7 +1602,7 @@ class PFAFFProtocol:
 
         Response: CTRL_ACK on success, CTRL_NAK on error.
         """
-        params = self._kl_params_buffer
+        params = self._delete_card_params_buffer
         card_no = params[3]
         type_byte = params[6]
         slot_raw  = params[5]
@@ -1718,9 +1719,9 @@ class PFAFFProtocol:
             f"Read P-Memory: slot {slot_id}, {len(slot.pattern_xy)} bytes "
             f"({len(self._read_data)} ASCII chars) - sending first chunk"
         )
-        return self._send_next_read_chunk()
+        return self._send_next_read_pmemory_chunk()
 
-    def _send_next_read_chunk(self) -> bytes:
+    def _send_next_read_pmemory_chunk(self) -> bytes:
         """Build and return the next read chunk, advancing _read_offset.
 
         Chunk format: <hex-ASCII data> + CTRL_ETB + <2-char hex checksum>
