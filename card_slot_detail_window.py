@@ -1,5 +1,7 @@
 """
-Slot detail window - shows full information about a single P-Memory slot.
+Card Slot detail window - shows full information about a single memory card slot.
+
+This is adapted from slot_detail_window.py for card (memory card) slot data.
 """
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -33,22 +35,25 @@ class ClickableLabel(QLabel):
         super().mousePressEvent(event)
 
 
-class SlotDetailWindow(QDialog):
-    """Non-modal window showing detailed information about a P-Memory slot."""
+class CardSlotDetailWindow(QDialog):
+    """Non-modal window showing detailed information about a memory card slot."""
 
     def __init__(self, slots: list, slot_id: int, on_clear=None, on_navigate=None,
-                 machine_model: str = None, parent=None):
+                 machine_model: str = None, card_no=None, parent=None):
         super().__init__(parent)
         self._slots = slots
         self.slot = slots[slot_id]
         self._on_clear_callback = on_clear
         self._on_navigate = on_navigate
         self._machine_model = machine_model or ""
-        self.setWindowTitle(f"Slot P {slot_id} - Details")
+        self.card_no = card_no
+        # Do not display numeric slot IDs — title uses filename when available
+        title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+        self.setWindowTitle(title)
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(720)
-        self.setMinimumHeight(800)
+        self.setMinimumHeight(860)
         self._setup_ui()
         self._load_slot()
 
@@ -92,7 +97,7 @@ class SlotDetailWindow(QDialog):
 
         layout.addLayout(info_layout)
 
-        # Pattern preview
+        # Pattern preview (reuse PatternPreview for now)
         preview_group = QGroupBox("Pattern Preview")
         preview_layout = QVBoxLayout()
         self._preview = PatternPreview([], "", show_points=True)
@@ -118,7 +123,7 @@ class SlotDetailWindow(QDialog):
         # Tabbed widget
         tabs = QTabWidget()
 
-        # Tab 1: Raw data
+        # Tab 1: Raw data (adds preview_image field)
         raw_tab = QWidget()
         raw_layout = QVBoxLayout()
 
@@ -131,7 +136,7 @@ class SlotDetailWindow(QDialog):
         self._header_edit = QTextEdit()
         self._header_edit.setReadOnly(True)
         self._header_edit.setFont(QFont("Courier New", 9))
-        self._header_edit.setFixedHeight(80)
+        self._header_edit.setFixedHeight(40)
         raw_layout.addWidget(self._header_edit)
 
         pattern_label = QLabel("Pattern (raw)")
@@ -142,6 +147,17 @@ class SlotDetailWindow(QDialog):
         self._pattern_edit.setReadOnly(True)
         self._pattern_edit.setFont(QFont("Courier New", 9))
         raw_layout.addWidget(self._pattern_edit)
+
+        # New field for memory card slots: preview_image (raw representation)
+        preview_image_label = QLabel("Preview image (raw)")
+        preview_image_label.setFont(header_font)
+        raw_layout.addWidget(preview_image_label)
+
+        self._preview_image_edit = QTextEdit()
+        self._preview_image_edit.setReadOnly(True)
+        self._preview_image_edit.setFont(QFont("Courier New", 9))
+        self._preview_image_edit.setFixedHeight(80)
+        raw_layout.addWidget(self._preview_image_edit)
 
         raw_tab.setLayout(raw_layout)
         tabs.addTab(raw_tab, "Raw data")
@@ -159,7 +175,7 @@ class SlotDetailWindow(QDialog):
         self._header_edit_2 = QTextEdit()
         self._header_edit_2.setReadOnly(True)
         self._header_edit_2.setFont(QFont("Courier New", 9))
-        self._header_edit_2.setFixedHeight(60)
+        self._header_edit_2.setFixedHeight(40)
         header_layout.addWidget(self._header_edit_2)
 
         header_layout.addWidget(QLabel("Byte Analysis:"))
@@ -247,18 +263,26 @@ class SlotDetailWindow(QDialog):
 
     def _navigate(self, delta: int):
         """Switch to an adjacent slot."""
-        old_id = self.slot.slot_id
-        new_id = old_id + delta
-        if not (0 <= new_id < len(self._slots)):
+        # find current index in the slots list using object identity
+        try:
+            current_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
+        except StopIteration:
             return
-        if self._on_navigate and not self._on_navigate(old_id, new_id):
+        new_idx = current_idx + delta
+        if not (0 <= new_idx < len(self._slots)):
             return
-        self.slot = self._slots[new_id]
-        self.setWindowTitle(f"Slot P {new_id} - Details")
+        if self._on_navigate and not self._on_navigate(current_idx, new_idx):
+            return
+        self.slot = self._slots[new_idx]
+        title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+        self.setWindowTitle(title)
         self._load_slot()
 
     def _update_nav_buttons(self):
-        idx = self.slot.slot_id
+        try:
+            idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
+        except StopIteration:
+            idx = 0
         self._prev_btn.setEnabled(idx > 0)
         self._next_btn.setEnabled(idx < len(self._slots) - 1)
 
@@ -275,13 +299,6 @@ class SlotDetailWindow(QDialog):
         return bytes_list
 
     def _populate_header_grid(self):
-        """Populate the header byte analysis grid (dispatches by machine model)."""
-        if self._machine_model == "PFAFF Creative 1475 CD":
-            return self._populate_header_grid_1475cd()
-        else:
-            return self._populate_header_grid_75xx()
-
-    def _populate_header_grid_75xx(self):
         while self._header_grid.count():
             item = self._header_grid.takeAt(0)
             if item.widget():
@@ -290,34 +307,92 @@ class SlotDetailWindow(QDialog):
         header_bytes = self._get_header_bytes()
         stats = self.slot.get_pattern_stats()
 
-        if self.slot.pattern_type == "9mm":
+        if self.slot.pattern_type== "9mm":
             mapping = {
-                0: ("y_min",            "min(ys)"),
-                1: ("y_max",            "max(ys)"),
-                2: ("dx_abs_max",       "max(abs(dxs))"),
-                5: ("long_scale",       "Unknown"),              # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
-                6: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"), # two-byte H[6-7]
-                8: ("pn_x",             "xs[end]"),              # two-byte H[8-9]
-                10: ("span_x",          "max(xs) - min(xs)"),    # two-byte H[10-11]
-                12: ("y_min_to_bound",  "0x36 - min(ys)"),       # two-byte H[12-13]
-                14: ("span_y",          "max(ys) - min(ys)"),    # two-byte H[14-15]
+                0: ("fix_0x00",         "Fixed byte?"),               # DONE
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                7: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"),      # DONE
+                9: ("pn_x",             "xs[end]"),                   # DONE
+                11: ("span_x",          "max(xs) - min(xs)"),         # DONE
+                13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
+                15: ("span_y",          "max(ys) - min(ys)"),         # DONE
+                17: ("fix_0x00",        "Fixed byte?"),               # DONE
+                19: ("long_scale",      "Unknown"),                   # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
+                20: ("fix_0x00",        "Fixed byte?"),               # DONE
+                22: ("y_min_symmetry",  "min(ys) with extra logic"),  # DONE
+                23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
             }
-        else:
+        elif self.slot.pattern_type== "MAXI":
             mapping = {
-                0: ("y_min_norm",       "min(ys)"),
-                1: ("y_max_norm_div_2", "max(ys)//2"),
-                2: ("dx_abs_max",       "max(abs(dxs))"),
-                5: ("long_scale",       "Unknown"),              # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
-                6: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"), # two-byte H[6-7]
-                8: ("pn_x",             "xs[end]"),              # two-byte H[8-9]
-                10: ("span_x",          "max(xs) - min(xs)"),    # two-byte H[10-11]
-                12: ("y_min_to_bound",  "0x36 - min(ys)"),       # two-byte H[12-13]
-                14: ("span_y",          "max(ys) - min(ys)"),    # two-byte H[14-15]
-                16: ("dy_0n",           "ys[end] - ys[0]"),      # two-byte H[16-17]
+                0: ("fix_0x00",         "Fixed byte?"),               # DONE
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                7: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"),      # DONE
+                9: ("pn_x",             "xs[end]"),                   # DONE
+                11: ("span_x",          "max(xs) - min(xs)"),         # DONE
+                13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
+                15: ("span_y",          "max(ys) - min(ys)"),         # DONE
+                17: ("dy_0n",           "ys[n]-ys[0]"),               # DONE
+                19: ("long_scale",      "Unknown"),                # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
+                20: ("y_min_neg",       "-min(ys)"),                  # DONE; see comment below (1)
+                22: ("fix_0x00",        "Fixed byte?"),               # DONE
+                23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
             }
 
-        two_byte_pairs = {6: 7, 8: 9, 10: 11, 12: 13, 14: 15, 16: 17}
+            # (1) y_min_neg
+            #   PCD sometimes sends here different value than y_min_abs (when 
+            #   a small pattern is moved up on canvas), but this seems to be 
+            #   a quirk/bug and can be ignored. The same pattern results in 
+            #   different values of this header parameter depending on its
+            #   vertical position on the canvas, despite the fact that the
+            #   pattern x-y coordinates are always heavily translated for MAXI
+            #   patterns and the original position on canvas is irrelevant
+            #   after translation.
+        else:
+            mapping = {
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("card_no",          "Card number"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
+            }
+
+        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 24: 25, 27:28}
         skip_indices = set(two_byte_pairs.values())
+
+        # Prepare card-specific expected value callables for header bytes
+        ptype = self.slot.pattern_type
+        type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Small hoop': 0x03, 'Large hoop': 0x03}
+        card_expect = {
+            'fix_0x00': 0x00,
+            'fix_0x10': 0x10,
+            'card_no': self.card_no,
+            'fix_0xC0': 0xC0,
+            'type': type_map.get(ptype, None),
+            'fix_0x01': 0x01,
+        }
 
         mono = QFont("Courier New", 9)
         bold_font = QFont()
@@ -330,13 +405,10 @@ class SlotDetailWindow(QDialog):
             self._header_grid.addWidget(hdr, 0, col)
 
         def _add_row(grid_row, byte_label, h_val, combined, stat_key, stat_val_raw, is_two_byte):
-            """Emit one grid row across all 7 columns."""
-            # Col 0: byte index label
             idx_lbl = QLabel(byte_label)
             idx_lbl.setFont(mono)
             self._header_grid.addWidget(idx_lbl, grid_row, 0)
 
-            # Col 1: header value hex
             if combined is not None:
                 hex_str = f"0x{combined & 0xFFFF:04X}" if is_two_byte else f"0x{combined:02X}"
             else:
@@ -345,13 +417,11 @@ class SlotDetailWindow(QDialog):
             hex_lbl.setFont(mono)
             self._header_grid.addWidget(hex_lbl, grid_row, 1)
 
-            # Col 2: header value dec
             dec_str = str(combined) if combined is not None else "--"
             dec_lbl = QLabel(dec_str)
             dec_lbl.setFont(mono)
             self._header_grid.addWidget(dec_lbl, grid_row, 2)
 
-            # Cols 3-4: stat hex / dec
             if stat_key is not None and stat_val_raw is not None:
                 if is_two_byte:
                     stat_hex_str = f"0x{stat_val_raw & 0xFFFF:04X}"
@@ -370,8 +440,7 @@ class SlotDetailWindow(QDialog):
             stat_dec_lbl.setFont(mono)
             self._header_grid.addWidget(stat_dec_lbl, grid_row, 4)
 
-            # Col 5: stat name
-            if h_val is not None:  # h_val used as tooltip source; stat_key is the name
+            if h_val is not None:
                 name_str = stat_key if stat_key is not None else ("unknown" if h_val in mapping else "")
             else:
                 name_str = stat_key or ""
@@ -379,7 +448,6 @@ class SlotDetailWindow(QDialog):
             name_lbl.setFont(mono)
             self._header_grid.addWidget(name_lbl, grid_row, 5)
 
-            # Col 6: OK/NOK
             status_lbl = QLabel()
             status_lbl.setFont(bold_font)
             if stat_key is not None and stat_val_raw is not None and combined is not None:
@@ -391,7 +459,6 @@ class SlotDetailWindow(QDialog):
                     status_lbl.setText("NOK")
                     status_lbl.setStyleSheet("color: red;")
             elif stat_key is None and combined is not None:
-                # unmapped single/pair — expected to be 0
                 if combined == 0:
                     status_lbl.setText("OK")
                     status_lbl.setStyleSheet("color: green;")
@@ -413,16 +480,25 @@ class SlotDetailWindow(QDialog):
                 h_lo = header_bytes[idx2] if idx2 < len(header_bytes) else None
                 combined = ((h_hi << 8) | h_lo) if (h_hi is not None and h_lo is not None) else None
                 if combined is not None:
-                    combined = combined - 0x10000 if combined >= 0x8000 else combined # signed conversion
+                    combined = combined - 0x10000 if combined >= 0x8000 else combined
                 byte_label = f"H[{idx}-{idx2}]"
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                
+                # Default from pattern stats when available
                 stat_val_raw = stats.get(stat_key) if stat_key else None
-                if idx in mapping:
-                    # set tooltip via name label — pass idx as h_val sentinel
-                    pass
+
+                # Special computed sizes come from slot fields (pattern_raw, preview_raw, filename)
+                if stat_key == 'size_pattern':
+                    stat_val_raw = len(self.slot.pattern_raw) // 2
+                elif stat_key == 'size_preview':
+                    stat_val_raw = len(self.slot.preview_raw) // 2
+                elif stat_key == 'size_name':
+                    stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key in card_expect: # Override with card-specific expectation if defined
+                    stat_val_raw = card_expect[stat_key]
+
                 _add_row(grid_row, byte_label, idx, combined, stat_key, stat_val_raw, is_two_byte=True)
-                # apply tooltip to the byte label widget we just added
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
                     if w and w.widget():
@@ -432,7 +508,20 @@ class SlotDetailWindow(QDialog):
                 byte_label = f"H[{idx}]"
 
                 stat_key, stat_label = mapping[idx] if idx in mapping else (None, "")
+                
+                # Default from pattern stats when available
                 stat_val_raw = stats.get(stat_key) if stat_key else None
+
+                # Special computed sizes come from slot fields (pattern_raw, preview_raw, filename)
+                if stat_key == 'size_pattern':
+                    stat_val_raw = len(self.slot.pattern_raw) // 2
+                elif stat_key == 'size_preview':
+                    stat_val_raw = len(self.slot.preview_raw) // 2
+                elif stat_key == 'size_name':
+                    stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key in card_expect: # Override with card-specific expectation if defined
+                    stat_val_raw = card_expect[stat_key]
+
                 _add_row(grid_row, byte_label, idx, h_byte, stat_key, stat_val_raw, is_two_byte=False)
                 if idx in mapping:
                     w = self._header_grid.itemAtPosition(grid_row, 0)
@@ -443,108 +532,6 @@ class SlotDetailWindow(QDialog):
 
         self._header_grid.addItem(
             QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), grid_row, 0, 1, 7)
-
-    def _populate_header_grid_1475cd(self):
-        """Populate the header byte analysis grid for PFAFF Creative 1475 CD.
-
-        The 1475 CD header has only 4 bytes.
-        """
-        while self._header_grid.count():
-            item = self._header_grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        header_bytes = self._get_header_bytes()
-        stats = self.slot.get_pattern_stats()
-
-        if self.slot.pattern_type == "9mm":
-            mapping = {
-                0: ("y_min",      "min(ys)"),
-                1: ("y_max",      "max(ys)"),
-                2: ("dx_abs_max", "max(abs(dxs))"),
-                3: ("long_scale", "Longitudinal scaling"), # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
-            }
-        else:
-            mapping = {
-                0: ("y_min_norm", "min(ys)"),
-                1: ("y_max_norm", "max(ys)"),
-                2: (None,         "Unknown"),
-                3: ("long_scale", "Longitudinal scaling"), # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
-            }
-
-        mono = QFont("Courier New", 9)
-        bold_font = QFont()
-        bold_font.setBold(True)
-
-        # Header row
-        for col, text in enumerate(("Byte", "Hex", "Dec", "Stat hex", "Stat dec", "Stat name", "OK/NOK")):
-            hdr = QLabel(text)
-            hdr.setFont(bold_font)
-            self._header_grid.addWidget(hdr, 0, col)
-
-        for grid_row, idx in enumerate(range(4), start=1):
-            h_byte = header_bytes[idx] if idx < len(header_bytes) else None
-            byte_label = f"H[{idx}]"
-            stat_key, stat_label = mapping.get(idx, (None, ""))
-            stat_val_raw = stats.get(stat_key) if stat_key else None
-
-            # Col 0: byte label
-            idx_lbl = QLabel(byte_label)
-            idx_lbl.setFont(mono)
-            if stat_label:
-                idx_lbl.setToolTip(stat_label)
-            self._header_grid.addWidget(idx_lbl, grid_row, 0)
-
-            # Col 1: hex
-            hex_lbl = QLabel(f"0x{h_byte:02X}" if h_byte is not None else "--")
-            hex_lbl.setFont(mono)
-            self._header_grid.addWidget(hex_lbl, grid_row, 1)
-
-            # Col 2: dec
-            dec_lbl = QLabel(str(h_byte) if h_byte is not None else "--")
-            dec_lbl.setFont(mono)
-            self._header_grid.addWidget(dec_lbl, grid_row, 2)
-
-            # Cols 3-4: stat hex / dec
-            if stat_key and stat_val_raw is not None:
-                stat_hex_lbl = QLabel(f"0x{stat_val_raw & 0xFF:02X}")
-                stat_dec_lbl = QLabel(str(stat_val_raw))
-            else:
-                stat_hex_lbl = QLabel("--")
-                stat_dec_lbl = QLabel("--")
-            stat_hex_lbl.setFont(mono)
-            stat_dec_lbl.setFont(mono)
-            self._header_grid.addWidget(stat_hex_lbl, grid_row, 3)
-            self._header_grid.addWidget(stat_dec_lbl, grid_row, 4)
-
-            # Col 5: stat name
-            name_lbl = QLabel(stat_key or "")
-            name_lbl.setFont(mono)
-            self._header_grid.addWidget(name_lbl, grid_row, 5)
-
-            # Col 6: OK/NOK
-            status_lbl = QLabel()
-            status_lbl.setFont(bold_font)
-            if stat_key and stat_val_raw is not None and h_byte is not None:
-                if h_byte == (stat_val_raw & 0xFF):
-                    status_lbl.setText("OK")
-                    status_lbl.setStyleSheet("color: green;")
-                else:
-                    status_lbl.setText("NOK")
-                    status_lbl.setStyleSheet("color: red;")
-            elif stat_key is None and h_byte is not None:
-                if h_byte == 0:
-                    status_lbl.setText("OK")
-                    status_lbl.setStyleSheet("color: green;")
-                else:
-                    status_lbl.setText("NOK")
-                    status_lbl.setStyleSheet("color: red;")
-            else:
-                status_lbl.setText("--")
-            self._header_grid.addWidget(status_lbl, grid_row, 6)
-
-        self._header_grid.addItem(
-            QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), 5, 0, 1, 7)
 
     def _populate_pattern_grid(self):
         """Fill the Pattern tab with all pattern statistics."""
@@ -642,17 +629,15 @@ class SlotDetailWindow(QDialog):
         self._pattern_grid.addItem(
             QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), len(rows) + 1, 0, 1, 3)
 
-
     def _populate_points_grid(self):
         """Fill the Pattern tab with point list: index, (x,y) Dec, (x,y) Hex."""
-        # Populate the points table
         data = list(self.slot.pattern_xy)
         xs = data[0::2]
         ys = data[1::2]
         n = min(len(xs), len(ys))
 
-        xyt = list(self.slot.pattern_xyt)    # x,y,t per stitch
-        xytacc = list(self.slot.pattern_xytacc)  # one value per stitch
+        xyt = list(self.slot.pattern_xyt)
+        xytacc = list(self.slot.pattern_xytacc)
 
         mono = QFont("Courier New", 9)
 
@@ -692,7 +677,6 @@ class SlotDetailWindow(QDialog):
             diff_hex_it = QTableWidgetItem(diff_hex_text)
             diff_hex_it.setFont(mono)
 
-            # pattern_xyt: groups of 3 (x, y, t)
             base = i * 3
             if base + 2 < len(xyt):
                 xyt_text = f"({xyt[base]}, {xyt[base+1]}, {xyt[base+2]})"
@@ -701,7 +685,6 @@ class SlotDetailWindow(QDialog):
             xyt_it = QTableWidgetItem(xyt_text)
             xyt_it.setFont(mono)
 
-            # pattern_xytacc: groups of 3 (x, y, tacc)
             base = i * 3
             if base + 2 < len(xytacc):
                 xytacc_text = f"({xytacc[base]}, {xytacc[base+1]}, {xytacc[base+2]})"
@@ -718,7 +701,6 @@ class SlotDetailWindow(QDialog):
             self._points_table.setItem(i, 5, hex_it)
             self._points_table.setItem(i, 6, diff_hex_it)
 
-        # Ensure table expands to fill available space and size columns
         self._points_table.setSizePolicy(self._points_table.sizePolicy().horizontalPolicy(), QSizePolicy.Expanding)
         try:
             self._points_table.resizeColumnsToContents()
@@ -776,8 +758,6 @@ class SlotDetailWindow(QDialog):
             QApplication.clipboard().setText("\n".join(lines))
 
     def _on_point_row_clicked(self, idx: int):
-        """Handle user clicking a point row: highlight preview and row."""
-        # legacy handler for ClickableLabel rows (kept for compatibility)
         try:
             self._preview.selected_point = idx
             self._preview.update()
@@ -785,14 +765,12 @@ class SlotDetailWindow(QDialog):
             pass
 
     def _on_point_table_selection_changed(self):
-        """Handle selection change in the points `QTableWidget`."""
         sels = self._points_table.selectionModel().selectedRows()
         if not sels:
             self._preview.selected_point = None
             self._preview.update()
             return
         row = sels[0].row()
-        # ensure within range
         try:
             self._preview.selected_point = int(self._points_table.item(row, 0).text())
         except Exception:
@@ -805,10 +783,16 @@ class SlotDetailWindow(QDialog):
 
     def _load_slot(self):
         """Populate all fields from the current slot data."""
-        self._slot_label.setText(f"Slot:  P {self.slot.slot_id}")
+        # Do not show persistent numeric slot IDs — show filename when available
+        slot_text = f"Slot: {self.slot.filename}" if self.slot.filename else "Slot"
+        self._slot_label.setText(slot_text)
         self._type_label.setText(f"    Type:  {self.slot.pattern_type}")
         self._bytes_label.setText(f"    Bytes:  {self.slot.get_size_bytes()}")
         self._stitches_label.setText(f"    Stitches:  {self.slot.get_size_stitches()}")
+        # Ensure pattern_xy is available for preview: decode 9mm and MAXI patterns when needed
+        ptype = self.slot.pattern_type
+        if ptype in ("9mm", "MAXI"):
+            self.slot.parse_pattern_data()
         self._preview.pattern_xy = list(self.slot.pattern_xy)
         self._preview.pattern_type = self.slot.pattern_type
         self._preview.update()
@@ -820,55 +804,107 @@ class SlotDetailWindow(QDialog):
         self._update_nav_buttons()
 
     def _format_header_raw(self, raw: str) -> str:
-        """Return header_raw optionally split into 2-char blocks."""
         if not self._logical_split_cb.isChecked() or not raw:
             return raw
-        return ' '.join(raw[i:i+2] for i in range(0, len(raw), 2))
+
+        # Split into byte strings (2 hex chars each)
+        raw = raw.strip()
+        bytes_list = [raw[i:i+2] for i in range(0, len(raw), 2) if raw[i:i+2]]
+        if not bytes_list:
+            return raw
+
+        # Header two-byte grouping as used in header analysis
+        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 22: 23, 24: 25, 27: 28}
+        skip_indices = set(two_byte_pairs.values())
+
+        parts = []
+        i = 0
+        while i < len(bytes_list):
+            if i in skip_indices:
+                # this index is the low byte of a pair already handled
+                i += 1
+                continue
+
+            if i in two_byte_pairs:
+                j = two_byte_pairs[i]
+                hi = bytes_list[i] if i < len(bytes_list) else ''
+                lo = bytes_list[j] if j < len(bytes_list) else ''
+                if hi and lo:
+                    parts.append(hi + lo)  # join without space
+                elif hi:
+                    parts.append(hi)
+                elif lo:
+                    parts.append(lo)
+                i = j + 1
+            else:
+                parts.append(bytes_list[i])
+                i += 1
+
+        return ' '.join(parts)
 
     def _format_pattern_raw(self, raw: str, pattern_type: str) -> str:
-        """Return pattern_raw optionally split per the logical structure."""
+        # Show grouped bytes per user rules when logical split enabled.
         if not self._logical_split_cb.isChecked() or not raw:
             return raw
-        lines = []
-        i = 0
-        if pattern_type == "9mm":
-            # each stitch: 3 chars, space, 2 chars, newline
-            group = 5
-            while i < len(raw):
-                a = raw[i:i+3]
-                b = raw[i+3:i+5]
-                line = a + (' ' + b if b else '')
-                lines.append(line)
-                i += group
-        else:  # MAXI
-            # each stitch: 3 chars, space, 2 chars, space, 2 chars, newline
-            group = 7
-            while i < len(raw):
-                a = raw[i:i+3]
-                b = raw[i+3:i+5]
-                c = raw[i+5:i+7]
-                line = a + (' ' + b if b else '') + (' ' + c if c else '')
-                lines.append(line)
-                i += group
-        return '\n'.join(lines)
+
+        # Split raw hex string into byte strings (2 chars each). Keep original casing.
+        raw = raw.strip()
+        bytes_list = [raw[i:i+2] for i in range(0, len(raw), 2) if raw[i:i+2]]
+        if not bytes_list:
+            return raw
+
+        # Detect special single-byte markers (0x80, 0x8A) in a case-insensitive way.
+        specials = {"80", "8a"}
+        bytes_lower = [b.lower() for b in bytes_list]
+        start_special = bytes_lower[0] in specials
+        end_special = bytes_lower[-1] in specials
+
+        rows = []
+        idx = 0
+
+        # If first byte is special, emit it as its own row.
+        if start_special:
+            rows.append(bytes_list[0])
+            idx = 1
+
+        # Choose grouping: 9mm -> 2 bytes per row, MAXI -> 3 bytes per row
+        group = 2 if pattern_type == "9mm" else 3
+
+        # Determine body limit: if last byte is special, leave it for the final row
+        body_limit = len(bytes_list) - 1 if end_special else len(bytes_list)
+
+        # Group the middle bytes
+        while idx < body_limit:
+            group_bytes = bytes_list[idx: idx + group]
+            if not group_bytes:
+                break
+            rows.append(' '.join(group_bytes))
+            idx += group
+
+        # If there are remaining bytes (including a trailing special), emit them as final row(s).
+        if idx < len(bytes_list):
+            # If exactly one remaining byte, append as single; otherwise join with spaces.
+            rem = bytes_list[idx:]
+            rows.append(' '.join(rem))
+
+        return '\n'.join(rows)
 
     def _on_show_canvas_changed(self):
-        """Toggle the canvas boundary rectangle in the pattern preview."""
         self._preview.show_canvas = self._show_canvas_cb.isChecked()
         self._preview.update()
 
     def _on_hide_points_changed(self):
-        """Toggle point markers in the pattern preview."""
         self._preview.show_points = not self._hide_points_cb.isChecked()
         self._preview.update()
 
     def _refresh_raw_display(self):
-        """Update header and pattern raw text edits (respects logical split)."""
         formatted_header = self._format_header_raw(self.slot.header_raw)
         self._header_edit.setPlainText(formatted_header)
         self._header_edit_2.setPlainText(formatted_header)
         self._pattern_edit.setPlainText(
             self._format_pattern_raw(self.slot.pattern_raw, self.slot.pattern_type))
+        # preview_raw is the raw preview field for card slots
+        self._preview_image_edit.setPlainText(self.slot.preview_raw)
 
     def refresh(self):
         """Re-read from the slot and update all displayed fields."""

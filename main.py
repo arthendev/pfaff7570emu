@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
-from machine_state import MachineState
+from machine_state import MachineState, CardMemorySlot
 from pmemory_tab import PMemoryTab
 from mmemory_tab import MMemoryTab
 from card_memory_tab import CardMemoryTab
@@ -23,6 +23,7 @@ from serial_handler import SerialHandler
 from pfaff_protocol import PFAFFProtocol
 from preferences_dialog import PreferencesDialog
 from slot_detail_window import SlotDetailWindow
+from card_slot_detail_window import CardSlotDetailWindow
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -50,11 +51,20 @@ class PfaffCreativeEmulator(QMainWindow):
         self.serial_handler.data_received.connect(self.on_serial_data_received)
         self.serial_handler.error_occurred.connect(self.on_serial_error)
         self.serial_handler.connection_changed.connect(self._on_connection_changed)
-        self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed)
+        self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed,
+                                       on_card_changed=self._on_card_changed)
         
         # Setup UI
         self.setup_ui()
         self.pmemory_tab.slot_clicked.connect(self._open_slot_detail)
+        # CardMemoryTab exposes separate CardSpaceTab widgets; connect their signals
+        try:
+            self.card_memory_tab._tab_9mm.slot_clicked.connect(self._open_slot_detail)
+            self.card_memory_tab._tab_maxi.slot_clicked.connect(self._open_slot_detail)
+            self.card_memory_tab._tab_embroidery.slot_clicked.connect(self._open_slot_detail)
+        except Exception:
+            # Fallback: do nothing if internals are different
+            pass
         self.create_menu()
 
         logger.info("Application started")
@@ -402,7 +412,7 @@ class PfaffCreativeEmulator(QMainWindow):
         for slot in self.machine_state.p_memory_slots:
             slot.clear()
         self.machine_state.m_memory = []
-        self.machine_state.card_memory = []
+        self.machine_state.clear_card_memory()
         self.current_file = None
         self.pmemory_tab.update_ui(self.machine_state)
         self.mmemory_tab.update_ui(self.machine_state)
@@ -536,9 +546,71 @@ class PfaffCreativeEmulator(QMainWindow):
         return actions
 
     def _open_slot_detail(self, slot):
-        """Open (or raise) a detail window for the given slot."""
+        """Open (or raise) a detail window for the given slot.
+
+        Supports both `MemorySlot` (P-Memory) and `CardMemorySlot` (card).
+        Uses unique keys in `_slot_detail_windows` to avoid collisions.
+        """
+        # Determine slot kind and normalize slots list + index
+        if isinstance(slot, CardMemorySlot):
+            # find which card space contains this slot (match by object identity)
+            space = None
+            for cand in (self.machine_state.card_9mm, self.machine_state.card_maxi, self.machine_state.card_embroidery):
+                try:
+                    if slot in cand.slots:
+                        space = cand
+                        break
+                except Exception:
+                    pass
+            if space is None:
+                return
+            slots_list = space.sorted_slots()
+            try:
+                idx = next(i for i, s in enumerate(slots_list) if s is slot)
+            except StopIteration:
+                return
+            unique_key = ("card", space.space_name, id(slot))
+            existing = self._slot_detail_windows.get(unique_key)
+            if existing is not None:
+                existing.raise_()
+                existing.activateWindow()
+                return
+
+            def on_clear():
+                self._set_modified(True)
+                self.card_memory_tab.update_ui(self.machine_state)
+
+            def on_navigate(old_idx, new_idx):
+                # old_idx/new_idx are indices into slots_list
+                new_slot = slots_list[new_idx]
+                new_key = ("card", space.space_name, id(new_slot))
+                if new_key in self._slot_detail_windows:
+                    self._slot_detail_windows[new_key].raise_()
+                    self._slot_detail_windows[new_key].activateWindow()
+                    return False
+                old_slot = slots_list[old_idx]
+                old_key = ("card", space.space_name, id(old_slot))
+                w = self._slot_detail_windows.pop(old_key, None)
+                if w:
+                    self._slot_detail_windows[new_key] = w
+                return True
+
+            win = CardSlotDetailWindow(slots_list, idx, on_clear=on_clear,
+                                       on_navigate=on_navigate,
+                                       machine_model=self.machine_state.machine_model, 
+                                       card_no=self.machine_state.card_number, parent=self)
+            win.destroyed.connect(lambda: [
+                self._slot_detail_windows.pop(k, None)
+                for k, v in list(self._slot_detail_windows.items()) if v is win
+            ])
+            self._slot_detail_windows[unique_key] = win
+            win.show()
+            return
+
+        # Default: P-Memory slot
         slot_id = slot.slot_id
-        existing = self._slot_detail_windows.get(slot_id)
+        unique_key = ("pmemory", slot_id)
+        existing = self._slot_detail_windows.get(unique_key)
         if existing is not None:
             existing.raise_()
             existing.activateWindow()
@@ -549,13 +621,15 @@ class PfaffCreativeEmulator(QMainWindow):
             self.pmemory_tab.update_ui(self.machine_state)
 
         def on_navigate(old_id, new_id):
-            if new_id in self._slot_detail_windows:
-                self._slot_detail_windows[new_id].raise_()
-                self._slot_detail_windows[new_id].activateWindow()
+            # old_id/new_id are numeric P-memory slot indices
+            if ("pmemory", new_id) in self._slot_detail_windows:
+                self._slot_detail_windows[("pmemory", new_id)].raise_()
+                self._slot_detail_windows[("pmemory", new_id)].activateWindow()
                 return False
-            w = self._slot_detail_windows.pop(old_id, None)
+            old_key = ("pmemory", old_id)
+            w = self._slot_detail_windows.pop(old_key, None)
             if w:
-                self._slot_detail_windows[new_id] = w
+                self._slot_detail_windows[("pmemory", new_id)] = w
             return True
 
         win = SlotDetailWindow(self.machine_state.p_memory_slots, slot_id,
@@ -565,7 +639,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self._slot_detail_windows.pop(k, None)
             for k, v in list(self._slot_detail_windows.items()) if v is win
         ])
-        self._slot_detail_windows[slot_id] = win
+        self._slot_detail_windows[unique_key] = win
         win.show()
 
     def _show_about(self):
@@ -711,11 +785,20 @@ class PfaffCreativeEmulator(QMainWindow):
         for win in list(self._slot_detail_windows.values()):
             win._load_slot()
 
+    def _on_card_changed(self):
+        """Refresh Card Memory tab after a write card slot operation"""
+        self.card_memory_tab.update_ui(self.machine_state)
+        self._set_modified(True)
+
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""
+        # byte_hex_str = ' '.join(f'{b:02X}' for b in data)
+        # logger.debug(f"Serial RX ({len(data)} bytes): {byte_hex_str}")
         logger.debug(f"Serial RX ({len(data)} bytes): {data.hex()}")
         response = self.protocol.process_incoming(data)
         if response:
+            # response_byte_hex_str = ' '.join(f'{b:02X}' for b in response)
+            # logger.debug(f"Serial TX ({len(response)} bytes): {response_byte_hex_str}")
             logger.debug(f"Serial TX ({len(response)} bytes): {response.hex()}")
             self.serial_handler.send_data(response)
     
