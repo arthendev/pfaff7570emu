@@ -346,14 +346,24 @@ class CardSlotDetailWindow(QDialog):
                 15: ("span_y",          "max(ys) - min(ys)"),         # DONE
                 17: ("dy_0n",           "ys[n]-ys[0]"),               # DONE
                 19: (None,              "Unknown"),                   # DONE (unknown/scaling)
-                20: ("y_min_abs",       "abs(min(ys))"),              # DONE
-                22: (None,              "Unknown"),                   # ToDo: (unknown)
+                20: ("y_min_neg",       "-min(ys)"),                  # DONE; see comment below (1)
+                22: ("fix_0x00",        "Fixed byte?"),               # DONE
                 23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
                 24: ("size_preview",    "size(preview_image)"),       # DONE
                 26: ("fix_0x01",        "Fixed byte?"),               # DONE
                 27: ("size_pattern",    "size(pattern_raw)"),         # DONE
                 29: ("size_name",       "size(filename)"),            # DONE
             }
+
+            # (1) y_min_neg
+            #   PCD sometimes sends here different value than y_min_abs (when 
+            #   a small pattern is moved up on canvas), but this seems to be 
+            #   a quirk/bug and can be ignored. The same pattern results in 
+            #   different values of this header parameter depending on its
+            #   vertical position on the canvas, despite the fact that the
+            #   pattern x-y coordinates are always heavily translated for MAXI
+            #   patterns and the original position on canvas is irrelevant
+            #   after translation.
         else:
             mapping = {
                 1: ("fix_0x00",         "Fixed byte?"),               # DONE
@@ -540,6 +550,8 @@ class CardSlotDetailWindow(QDialog):
             ("x_max",               s["x_max"],         None),
             ("y_min",               s["y_min"],         None),
             ("y_max",               s["y_max"],         None),
+            ("y_min_abs",           s["y_min_abs"],     None),
+            ("y_min_neg",           s["y_min_neg"],     None),
             ("y_min_norm",          s["y_min_norm"],    None),
             ("y_max_norm",          s["y_max_norm"],    None),
             ("y_max_norm_div_2",    s["y_max_norm_div_2"],   None),
