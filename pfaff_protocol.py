@@ -88,7 +88,7 @@ class PFAFFProtocol:
     }
 
     # Bell command debounce time (seconds)
-    BELL_DEBOUNCE_SECONDS = 2.0
+    BELL_DEBOUNCE_SECONDS = 0.5
     
     def __init__(self, machine_state=None, on_pmemory_changed=None, on_card_changed=None):
         self.machine_state = machine_state
