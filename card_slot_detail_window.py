@@ -308,65 +308,67 @@ class CardSlotDetailWindow(QDialog):
 
         if self.slot.pattern_type== "9mm":
             mapping = {
-                0: ("fix_0x00", "Fixed byte?"),               # DONE
-                1: ("fix_0x00", "Fixed byte?"),               # DONE
-                2: ("fix_0x10", "Fixed byte?"),               # DONE
-                3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("fix_0xC0", "Fixed byte?"),               # DONE
-                5: ("fix_0x00", "Fixed byte?"),               # DONE
-                6: ("type", "Pattern type"),                  # DONE
-                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
-                9: ("pn_x", "xs[end]"),                       # DONE
-                11: ("span_x", "max(xs) - min(xs)"),          # DONE
-                13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
-                15: ("span_y", "max(ys) - min(ys)"),          # DONE
-                17: ("fix_0x00", "Unknown"),                  # DONE
-                19: (None, "Unknown"),                        # DONE (unknown/scaling)
-                20: ("fix_0x00", "Unknown"),                  # DONE
-                22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
-                24: ("size_preview", "size(preview_image)"),  # DONE
-                26: ("fix_0x01", "Fixed byte?"),              # DONE
-                27: ("size_pattern", "size(pattern_raw)"),    # DONE
-                29: ("size_name", "size(filename)"),          # DONE
+                0: ("fix_0x00",         "Fixed byte?"),               # DONE
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                7: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"),      # DONE
+                9: ("pn_x",             "xs[end]"),                   # DONE
+                11: ("span_x",          "max(xs) - min(xs)"),         # DONE
+                13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
+                15: ("span_y",          "max(ys) - min(ys)"),         # DONE
+                17: ("fix_0x00",        "Fixed byte?"),               # DONE
+                19: (None,              "Unknown"),                   # DONE (unknown/scaling)
+                20: ("fix_0x00",        "Fixed byte?"),               # DONE
+                22: ("y_min_symmetry",  "min(ys) with extra logic"),  # DONE
+                23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
             }
         elif self.slot.pattern_type== "MAXI":
             mapping = {
-                0: ("fix_0x00", "Fixed byte?"),               # DONE
-                1: ("fix_0x00", "Fixed byte?"),               # DONE
-                2: ("fix_0x10", "Fixed byte?"),               # DONE
-                3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("fix_0xC0", "Fixed byte?"),               # DONE
-                5: ("fix_0x00", "Fixed byte?"),               # DONE
-                6: ("type", "Pattern type"),                  # DONE
-                7: ("d0x_min_abs", "abs(min(dxs)-xs[0]))"),   # DONE
-                9: ("pn_x", "xs[end]"),                       # DONE
-                11: ("span_x", "max(xs) - min(xs)"),          # DONE
-                13: ("y_min_to_bound", "0x36 - min(ys)"),     # DONE
-                15: ("span_y", "max(ys) - min(ys)"),          # DONE
-                17: ("dy_0n", "ys[n]-ys[0]"),                 # DONE
-                19: (None, "Unknown"),                        # DONE (unknown/scaling)
-                20: ("y_min_abs", "abs(min(ys))"),            # DONE
-                22: ("dx_abs_max", "max(abs(dxs))"),          # DONE
-                24: ("size_preview", "size(preview_image)"),  # DONE
-                26: ("fix_0x01", "Fixed byte?"),              # DONE
-                27: ("size_pattern", "size(pattern_raw)"),    # DONE
-                29: ("size_name", "size(filename)"),          # DONE
+                0: ("fix_0x00",         "Fixed byte?"),               # DONE
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                7: ("d0x_min_abs",      "abs(min(dxs)-xs[0]))"),      # DONE
+                9: ("pn_x",             "xs[end]"),                   # DONE
+                11: ("span_x",          "max(xs) - min(xs)"),         # DONE
+                13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
+                15: ("span_y",          "max(ys) - min(ys)"),         # DONE
+                17: ("dy_0n",           "ys[n]-ys[0]"),               # DONE
+                19: (None,              "Unknown"),                   # DONE (unknown/scaling)
+                20: ("y_min_abs",       "abs(min(ys))"),              # DONE
+                22: (None,              "Unknown"),                   # ToDo: (unknown)
+                23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
             }
         else:
             mapping = {
-                1: ("fix_0x00", "Fixed byte?"),               # DONE
-                2: ("fix_0x10", "Fixed byte?"),               # DONE
-                3: ("fix_0x02", "Fixed byte?"),               # DONE
-                4: ("fix_0xC0", "Fixed byte?"),               # DONE
-                5: ("fix_0x00", "Fixed byte?"),               # DONE
-                6: ("type", "Pattern type"),                  # DONE
-                24: ("size_preview", "size(preview_image)"),  # DONE
-                26: ("fix_0x01", "Fixed byte?"),              # DONE
-                27: ("size_pattern", "size(pattern_raw)"),    # DONE
-                29: ("size_name", "size(filename)"),          # DONE
+                1: ("fix_0x00",         "Fixed byte?"),               # DONE
+                2: ("fix_0x10",         "Fixed byte?"),               # DONE
+                3: ("fix_0x02",         "Fixed byte?"),               # DONE
+                4: ("fix_0xC0",         "Fixed byte?"),               # DONE
+                5: ("fix_0x00",         "Fixed byte?"),               # DONE
+                6: ("type",             "Pattern type"),              # DONE
+                24: ("size_preview",    "size(preview_image)"),       # DONE
+                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                27: ("size_pattern",    "size(pattern_raw)"),         # DONE
+                29: ("size_name",       "size(filename)"),            # DONE
             }
 
-        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 22: 23, 24: 25, 27:28}
+        two_byte_pairs = {7: 8, 9: 10, 11: 12, 13: 14, 15: 16, 17: 18, 20: 21, 24: 25, 27:28}
         skip_indices = set(two_byte_pairs.values())
 
         # Prepare card-specific expected value callables for header bytes
@@ -533,57 +535,58 @@ class CardSlotDetailWindow(QDialog):
         bold_font.setBold(True)
 
         rows = [
-            ("n",                   s.get("n"),             None),
-            ("x_min",               s.get("x_min"),         None),
-            ("x_max",               s.get("x_max"),         None),
-            ("y_min",               s.get("y_min"),         None),
-            ("y_max",               s.get("y_max"),         None),
-            ("y_min_norm",          s.get("y_min_norm"),    None),
-            ("y_max_norm",          s.get("y_max_norm"),    None),
-            ("y_max_norm_div_2",    s.get("y_max_norm_div_2"),   None),
-            ("y_min_to_bound",      s.get("y_min_to_bound"), None),
-            ("span_x",              s.get("span_x"),        None),
-            ("span_y",              s.get("span_y"),        None),
-            ("dx_max",              s.get("dx_max"),        None),
-            ("dx_min",              s.get("dx_min"),        None),
-            ("dx_min_abs",          s.get("dx_min_abs"),    None),
-            ("dx_abs_max",          s.get("dx_abs_max"),    None),
-            ("dy_max",              s.get("dy_max"),        None),
-            ("dy_min",              s.get("dy_min"),        None),
-            ("dy_min_abs",          s.get("dy_min_abs"),    None),
-            ("dy_abs_max",          s.get("dy_abs_max"),    None),
-            ("is_reversed",         s.get("is_reversed"),   None),
-            ("dx_0n",               s.get("dx_0n"),         None),
-            ("dx_0n_abs",           s.get("dx_0n_abs"),     None),
-            ("dy_0n",               s.get("dy_0n"),         None),
-            ("dy_0n_abs",           s.get("dy_0n_abs"),     None),
-            ("d0x_max",             s.get("d0x_max"),       None),
-            ("d0x_min",             s.get("d0x_min"),       None),
-            ("d0x_min_abs",         s.get("d0x_min_abs"),   None),
-            ("d0y_max",             s.get("d0y_max"),       None),
-            ("d0y_min",             s.get("d0y_min"),       None),
-            ("d0y_min_abs",         s.get("d0y_min_abs"),   None),
-            ("p0_x",                s.get("p0_x"),          None),
-            ("p0_y",                s.get("p0_y"),          None),
-            ("p1_x",                s.get("p1_x"),          None),
-            ("p1_y",                s.get("p1_y"),          None),
-            ("p1_dx",               s.get("p1_dx"),         None),
-            ("p1_dy",               s.get("p1_dy"),         None),
-            ("p1_dx_abs",           s.get("p1_dx_abs"),     None),
-            ("p1_dy_abs",           s.get("p1_dy_abs"),     None),
-            ("pn_x",                s.get("pn_x"),          None),
-            ("pn_y",                s.get("pn_y"),          None),
-            ("pn_dx",               s.get("pn_dx"),         None),
-            ("pn_dy",               s.get("pn_dy"),         None),
-            ("pn_dx_abs",           s.get("pn_dx_abs"),     None),
-            ("pn_dy_abs",           s.get("pn_dy_abs"),     None),
-            ("dnx_max",             s.get("dnx_max"),       None),
-            ("dnx_min",             s.get("dnx_min"),       None),
-            ("dnx_min_abs",         s.get("dnx_min_abs"),   None),
-            ("dny_max",             s.get("dny_max"),       None),
-            ("dny_min",             s.get("dny_min"),       None),
-            ("dny_min_abs",         s.get("dny_min_abs"),   None),
-            ("checksum",            s.get("checksum"),      None),
+            ("n",                   s["n"],             None),
+            ("x_min",               s["x_min"],         None),
+            ("x_max",               s["x_max"],         None),
+            ("y_min",               s["y_min"],         None),
+            ("y_max",               s["y_max"],         None),
+            ("y_min_norm",          s["y_min_norm"],    None),
+            ("y_max_norm",          s["y_max_norm"],    None),
+            ("y_max_norm_div_2",    s["y_max_norm_div_2"],   None),
+            ("y_min_to_bound",      s["y_min_to_bound"], None),
+            ("y_min_symmetry",      s["y_min_symmetry"], None),
+            ("span_x",              s["span_x"],        None),
+            ("span_y",              s["span_y"],        None),
+            ("dx_max",              s["dx_max"],        None),
+            ("dx_min",              s["dx_min"],        None),
+            ("dx_min_abs",          s["dx_min_abs"],    None),
+            ("dx_abs_max",          s["dx_abs_max"],    None),
+            ("dy_max",              s["dy_max"],        None),
+            ("dy_min",              s["dy_min"],        None),
+            ("dy_min_abs",          s["dy_min_abs"],    None),
+            ("dy_abs_max",          s["dy_abs_max"],    None),
+            ("is_reversed",         s["is_reversed"],   None),
+            ("dx_0n",               s["dx_0n"],         None),
+            ("dx_0n_abs",           s["dx_0n_abs"],     None),
+            ("dy_0n",               s["dy_0n"],         None),
+            ("dy_0n_abs",           s["dy_0n_abs"],     None),
+            ("d0x_max",             s["d0x_max"],       None),
+            ("d0x_min",             s["d0x_min"],       None),
+            ("d0x_min_abs",         s["d0x_min_abs"],   None),
+            ("d0y_max",             s["d0y_max"],       None),
+            ("d0y_min",             s["d0y_min"],       None),
+            ("d0y_min_abs",         s["d0y_min_abs"],   None),
+            ("p0_x",                s["p0_x"],          None),
+            ("p0_y",                s["p0_y"],          None),
+            ("p1_x",                s["p1_x"],          None),
+            ("p1_y",                s["p1_y"],          None),
+            ("p1_dx",               s["p1_dx"],         None),
+            ("p1_dy",               s["p1_dy"],         None),
+            ("p1_dx_abs",           s["p1_dx_abs"],     None),
+            ("p1_dy_abs",           s["p1_dy_abs"],     None),
+            ("pn_x",                s["pn_x"],          None),
+            ("pn_y",                s["pn_y"],          None),
+            ("pn_dx",               s["pn_dx"],         None),
+            ("pn_dy",               s["pn_dy"],         None),
+            ("pn_dx_abs",           s["pn_dx_abs"],     None),
+            ("pn_dy_abs",           s["pn_dy_abs"],     None),
+            ("dnx_max",             s["dnx_max"],       None),
+            ("dnx_min",             s["dnx_min"],       None),
+            ("dnx_min_abs",         s["dnx_min_abs"],   None),
+            ("dny_max",             s["dny_max"],       None),
+            ("dny_min",             s["dny_min"],       None),
+            ("dny_min_abs",         s["dny_min_abs"],   None),
+            ("checksum",            s["checksum"],      None),
         ]
 
         # Header row
@@ -612,7 +615,6 @@ class CardSlotDetailWindow(QDialog):
 
         self._pattern_grid.addItem(
             QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding), len(rows) + 1, 0, 1, 3)
-
 
     def _populate_points_grid(self):
         """Fill the Pattern tab with point list: index, (x,y) Dec, (x,y) Hex."""

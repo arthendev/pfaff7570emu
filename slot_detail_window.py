@@ -568,6 +568,7 @@ class SlotDetailWindow(QDialog):
             ("y_max_norm",          s["y_max_norm"],    None),
             ("y_max_norm_div_2",    s["y_max_norm_div_2"],   None),
             ("y_min_to_bound",      s["y_min_to_bound"], None),
+            ("y_min_symmetry",      s["y_min_symmetry"], None),
             ("span_x",              s["span_x"],        None),
             ("span_y",              s["span_y"],        None),
             ("dx_max",              s["dx_max"],        None),

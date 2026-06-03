@@ -10,6 +10,7 @@ from dataclasses import dataclass, asdict, field
 
 logger = logging.getLogger(__name__)
 
+# ToDo: consider common get_pattern_stats() method that can be used by both MemorySlot and CardMemorySlot
 
 @dataclass
 class MemorySlot:
@@ -136,7 +137,6 @@ class MemorySlot:
         self.pattern_xyt = pattern_xyt
         self.pattern_xytacc = pattern_xytacc
 
-
     def get_pattern_stats(self) -> dict:
         """Compute statistics from the pattern data (x,y interleaved)."""
         stats = {
@@ -147,6 +147,7 @@ class MemorySlot:
             "y_min_norm": None, "y_max_norm": None,
             "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
+            "y_min_symmetry": None,  # this one is tricky; used for memory card upload
             "span_x": None, "span_y": None,
             "dx_max": None, "dx_min": None,
             "dx_min_abs": None, "dx_abs_max": None,
@@ -186,6 +187,31 @@ class MemorySlot:
         stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
         stats["y_max_norm_div_2"] = stats["y_max_norm"] // 2
         stats["y_min_to_bound"] = 0x36 - stats["y_min"]
+
+        # y_min_symmetry
+        # based on y_min but with additional flag (MSB set) if the pattern is "top-heavy" (y_max farther from 27 than y_min)
+        # if pattern is "symmetrical" (i.e. y_max and y_min are equally distant from 27, or y_max=53 and y_min=0), then y_min_symmetry is 0 (with no extra flag)
+        if self.pattern_type == "9mm":
+                
+            y_min_symmetry = stats["y_min"]
+            
+            # Check if top-heavy
+            if stats["y_max"] - 27 > 27 - stats["y_min"]:
+                y_min_symmetry |= 0x80  # set MSB to indicate top-heavy
+            
+            # If pattern is symmetrical, set y_min_symmetry to 0 (no extra flag)
+            if stats["y_max"] >= 27 and stats["y_min"] <= 27:
+                dymax_27 = stats["y_max"] - 27
+                dymin_27 = 27 - stats["y_min"]
+                is_max_width = stats["y_max"] == 53 and stats["y_min"] == 0
+
+                if dymax_27 == dymin_27 or is_max_width:
+                    y_min_symmetry = 0
+        else:
+            y_min_symmetry = None
+
+        stats["y_min_symmetry"] = y_min_symmetry
+
         stats["span_x"] = stats["x_max"] - stats["x_min"]
         stats["span_y"] = stats["y_max"] - stats["y_min"]
         if len(xs) > 1:
@@ -399,24 +425,25 @@ class CardMemorySlot:
                 xs: List[int] = []
                 ys: List[int] = []
                 prev_x = 0
-                dy_acc = 0
+                side_transport_acc = 0
                 for i in range(triplets):
                     b0 = body[i*3]
                     b1 = body[i*3 + 1]
                     b2 = body[i*3 + 2]
 
-                    transport = b0 - 0xC6
-                    dy_acc += transport
+                    side_transport = b0 - 0xC6
+                    side_transport_acc += side_transport
                     dx = b1 - 0x5B
                     x = prev_x - dx
-                    y = b2 + dy_acc
+                    y = b2
                     xs.append(x)
-                    ys.append(y)
+                    ys.append(y + side_transport_acc)
                     # store immediate transport and accumulated transport
-                    pattern_xyt.extend([int(x), int(y), int(transport)])
-                    pattern_xytacc.extend([int(x), int(y), int(dy_acc)])
+                    pattern_xyt.extend([int(x), int(y), int(side_transport)])
+                    pattern_xytacc.extend([int(x), int(y), int(side_transport_acc)])
                     prev_x = x
 
+                # Shift x-coordinates if there are negative values, to ensure all x are non-negative.
                 if xs:
                     min_x = min(xs)
                     if min_x < 0:
@@ -451,6 +478,7 @@ class CardMemorySlot:
             "y_min_norm": None, "y_max_norm": None,
             "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
+            "y_min_symmetry": None,  # this one is tricky; used for memory card upload
             "span_x": None, "span_y": None,
             "dx_max": None, "dx_min": None,
             "dx_min_abs": None, "dx_abs_max": None,
@@ -472,7 +500,7 @@ class CardMemorySlot:
             "dny_max": None, "dny_min": None, "dny_min_abs": None,
             "checksum": None,
         }
-        if self.pattern_type == "" or len(self.pattern_xy) < 2:
+        if self.pattern_type == "Empty" or len(self.pattern_xy) < 2:
             return stats
         xs = self.pattern_xy[0::2]
         ys = self.pattern_xy[1::2]
@@ -484,12 +512,37 @@ class CardMemorySlot:
         stats["x_min"] = min(xs)
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
-        stats["y_min_abs"] = abs(min(ys))
+        stats["y_min_abs"] = abs(stats["y_min"])
         stats["y_max"] = max(ys)
         stats["y_min_norm"] = 0
         stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
         stats["y_max_norm_div_2"] = stats["y_max_norm"] // 2
         stats["y_min_to_bound"] = 0x36 - stats["y_min"]
+
+        # y_min_symmetry
+        # based on y_min but with additional flag (MSB set) if the pattern is "top-heavy" (y_max farther from 27 than y_min)
+        # if pattern is "symmetrical" (i.e. y_max and y_min are equally distant from 27, or y_max=53 and y_min=0), then y_min_symmetry is 0 (with no extra flag)
+        if self.pattern_type == "9mm":
+                
+            y_min_symmetry = stats["y_min"]
+            
+            # Check if top-heavy
+            if stats["y_max"] - 27 > 27 - stats["y_min"]:
+                y_min_symmetry |= 0x80  # set MSB to indicate top-heavy
+            
+            # If pattern is symmetrical, set y_min_symmetry to 0 (no extra flag)
+            if stats["y_max"] >= 27 and stats["y_min"] <= 27:
+                dymax_27 = stats["y_max"] - 27
+                dymin_27 = 27 - stats["y_min"]
+                is_max_width = stats["y_max"] == 53 and stats["y_min"] == 0
+
+                if dymax_27 == dymin_27 or is_max_width:
+                    y_min_symmetry = 0
+        else:
+            y_min_symmetry = None
+
+        stats["y_min_symmetry"] = y_min_symmetry
+
         stats["span_x"] = stats["x_max"] - stats["x_min"]
         stats["span_y"] = stats["y_max"] - stats["y_min"]
         if len(xs) > 1:
@@ -500,31 +553,31 @@ class CardMemorySlot:
             dys = [0]
         stats["dx_max"] = max(d for d in dxs)
         stats["dx_min"] = min(dxs)
-        stats["dx_min_abs"] = abs(stats["dx_min"]) if stats["dx_min"] is not None else None
+        stats["dx_min_abs"] = abs(stats["dx_min"])
         stats["dx_abs_max"] = max(abs(d) for d in dxs)
         stats["dy_max"] = max(d for d in dys)
         stats["dy_min"] = min(dys)
-        stats["dy_min_abs"] = abs(stats["dy_min"]) if stats["dy_min"] is not None else None
+        stats["dy_min_abs"] = abs(stats["dy_min"])
         stats["dy_abs_max"] = max(abs(d) for d in dys)
         stats["is_reversed"] = xs[-1] < xs[0]
         stats["dx_0n"] = xs[-1] - xs[0]
-        stats["dx_0n_abs"] = abs(stats["dx_0n"]) if stats["dx_0n"] is not None else None
+        stats["dx_0n_abs"] = abs(stats["dx_0n"])
         stats["dy_0n"] = ys[-1] - ys[0]
-        stats["dy_0n_abs"] = abs(stats["dy_0n"]) if stats["dy_0n"] is not None else None
+        stats["dy_0n_abs"] = abs(stats["dy_0n"])
         stats["d0x_max"] = stats["x_max"] - xs[0]
         stats["d0x_min"] = stats["x_min"] - xs[0]
-        stats["d0x_min_abs"] = abs(stats["d0x_min"]) if stats["d0x_min"] is not None else None
+        stats["d0x_min_abs"] = abs(stats["d0x_min"])
         stats["d0y_max"] = stats["y_max"] - ys[0]
         stats["d0y_min"] = stats["y_min"] - ys[0]
-        stats["d0y_min_abs"] = abs(stats["d0y_min"]) if stats["d0y_min"] is not None else None
+        stats["d0y_min_abs"] = abs(stats["d0y_min"])
         stats["p0_x"] = xs[0]
         stats["p0_y"] = ys[0]
         stats["p1_x"] = xs[1] if len(xs) > 1 else 0
         stats["p1_y"] = ys[1] if len(ys) > 1 else 0
         stats["p1_dx"] = xs[1] - xs[0] if len(xs) > 1 else 0
         stats["p1_dy"] = ys[1] - ys[0] if len(ys) > 1 else 0
-        stats["p1_dx_abs"] = abs(stats["p1_dx"]) if stats["p1_dx"] is not None else None
-        stats["p1_dy_abs"] = abs(stats["p1_dy"]) if stats["p1_dy"] is not None else None
+        stats["p1_dx_abs"] = abs(stats["p1_dx"])
+        stats["p1_dy_abs"] = abs(stats["p1_dy"])
         stats["pn_x"] = xs[-1]
         stats["pn_y"] = ys[-1]
         if len(xs) > 1:
@@ -535,15 +588,15 @@ class CardMemorySlot:
             dys_reversed = [0]
         stats["pn_dx"] = xs[-2] - xs[-1] if len(xs) > 1 else 0
         stats["pn_dy"] = ys[-2] - ys[-1] if len(ys) > 1 else 0
-        stats["pn_dx_abs"] = abs(stats["pn_dx"]) if stats["pn_dx"] is not None else None
-        stats["pn_dy_abs"] = abs(stats["pn_dy"]) if stats["pn_dy"] is not None else None
+        stats["pn_dx_abs"] = abs(stats["pn_dx"])
+        stats["pn_dy_abs"] = abs(stats["pn_dy"])
         stats["dnx_max"] = stats["x_max"] - xs[-1]
         stats["dnx_min"] = stats["x_min"] - xs[-1]
-        stats["dnx_min_abs"] = abs(stats["dnx_min"]) if stats["dnx_min"] is not None else None
+        stats["dnx_min_abs"] = abs(stats["dnx_min"])
         stats["dny_max"] = stats["y_max"] - ys[-1]
         stats["dny_min"] = stats["y_min"] - ys[-1]
-        stats["dny_min_abs"] = abs(stats["dny_min"]) if stats["dny_min"] is not None else None
-        stats["checksum"] = sum(self.pattern_xy) % 256 if self.pattern_xy else None
+        stats["dny_min_abs"] = abs(stats["dny_min"])
+        stats["checksum"] = sum(self.pattern_xy) % 256
         return stats
 
     def to_dict(self) -> Dict[str, Any]:
@@ -662,7 +715,6 @@ class MachineState:
                 self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
         elif num_slots < current:
             self.p_memory_slots = self.p_memory_slots[:num_slots]
-    
     
     def get_p_memory_slot(self, slot_id: int) -> MemorySlot:
         """Get P-Memory slot by ID"""
