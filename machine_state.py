@@ -144,6 +144,7 @@ class MemorySlot:
             "x_min": None, "x_max": None,
             "y_min": None, "y_max": None,
             "y_min_abs": None,
+            "y_min_neg": None,
             "y_min_norm": None, "y_max_norm": None,
             "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
@@ -182,6 +183,7 @@ class MemorySlot:
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
         stats["y_min_abs"] = abs(stats["y_min"])
+        stats["y_min_neg"] = -stats["y_min"]
         stats["y_max"] = max(ys)
         stats["y_min_norm"] = 0
         stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
@@ -475,6 +477,7 @@ class CardMemorySlot:
             "x_min": None, "x_max": None,
             "y_min": None, "y_max": None,
             "y_min_abs": None,
+            "y_min_neg": None,
             "y_min_norm": None, "y_max_norm": None,
             "y_max_norm_div_2": None,
             "y_min_to_bound": None,  # 0x36 - y_min
@@ -513,6 +516,7 @@ class CardMemorySlot:
         stats["x_max"] = max(xs)
         stats["y_min"] = min(ys)
         stats["y_min_abs"] = abs(stats["y_min"])
+        stats["y_min_neg"] = -stats["y_min"]
         stats["y_max"] = max(ys)
         stats["y_min_norm"] = 0
         stats["y_max_norm"] = stats["y_max"] - stats["y_min"]
