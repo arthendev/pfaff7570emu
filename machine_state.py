@@ -638,7 +638,9 @@ class CardMemorySpace:
         self.slots: List[CardMemorySlot] = []
 
     def get_slot(self, position: int) -> Optional[CardMemorySlot]:
-        """Return the slot at the given position (0-based index)."""
+        """Return the slot at the given position (0-based index), or None if out of range."""
+        if position < 0 or position >= len(self.slots):
+            return None
         return self.slots[position]
 
     def set_slot(self, slot: CardMemorySlot) -> None:
@@ -650,6 +652,8 @@ class CardMemorySpace:
 
     def delete_slot(self, position: int) -> None:
         """Delete the slot at the given position (0-based index). If out of range, do nothing."""
+        if position < 0 or position >= len(self.slots):
+            return
         self.slots.pop(position)
 
     def clear(self) -> None:
