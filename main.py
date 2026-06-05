@@ -241,6 +241,13 @@ class PfaffCreativeEmulator(QMainWindow):
         clear_all_action.triggered.connect(self._clear_all_pmemory)
         pmemory_submenu.addAction(clear_all_action)
 
+        card_submenu = QMenu("Memory Card", self)
+        machine_menu.addMenu(card_submenu)
+
+        delete_all_card_action = QAction("Delete all", self)
+        delete_all_card_action.triggered.connect(self._clear_all_card_memory)
+        card_submenu.addAction(delete_all_card_action)
+
         # Settings menu
         settings_menu = menubar.addMenu("Settings")
         preferences_action = QAction("Preferences", self)
@@ -776,6 +783,13 @@ class PfaffCreativeEmulator(QMainWindow):
             slot.clear()
         self.pmemory_tab.update_ui(self.machine_state)
         logger.info("P-Memory: all slots cleared")
+        self._set_modified(True)
+
+    def _clear_all_card_memory(self):
+        """Clear all Memory Card slots, resetting them to Empty."""
+        self.machine_state.clear_card_memory()
+        self.card_memory_tab.update_ui(self.machine_state)
+        logger.info("Memory Card: all slots deleted")
         self._set_modified(True)
 
     def _on_pmemory_changed(self):
