@@ -917,45 +917,34 @@ class CardSlotDetailWindow(QDialog):
         self._load_slot()
 
     def _clear_slot(self):
-        """Clear the slot, then navigate to the nearest non-empty slot."""
+        """Clear the slot, then show the nearest remaining slot."""
+
+        # Remember the old index before clearing
+        try:
+            old_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
+        except StopIteration:
+            old_idx = 0
+
         self.slot.clear()
 
-        # Find the index of the cleared slot
-        try:
-            current_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
-        except StopIteration:
-            current_idx = None
+        # Refresh the slots list from the parent CardMemorySpace.
+        # clear() already removed this slot from parent.slots, so the
+        # refreshed list will correctly reflect the remaining slots.
+        if hasattr(self.slot, '_parent'):
+            self._slots = self.slot._parent.sorted_slots()
 
-        # Search outward for the nearest non-empty slot
-        nearest_idx = None
-        if current_idx is not None:
-            n = len(self._slots)
-            for dist in range(1, n):
-                candidates = []
-                if current_idx - dist >= 0:
-                    candidates.append(current_idx - dist)
-                if current_idx + dist < n:
-                    candidates.append(current_idx + dist)
-                for idx in candidates:
-                    if self._slots[idx].pattern_type != "Empty":
-                        nearest_idx = idx
-                        break
-                if nearest_idx is not None:
-                    break
-
-        if nearest_idx is not None:
-            if self._on_navigate and not self._on_navigate(current_idx, nearest_idx):
-                self.refresh()
-                if self._on_clear_callback:
-                    self._on_clear_callback()
-                return
-            self.slot = self._slots[nearest_idx]
-            title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
-            self.setWindowTitle(title)
-            self._load_slot()
-        else:
-            # No non-empty slots left — close the window
+        if not self._slots:
             self.close()
+            if self._on_clear_callback:
+                self._on_clear_callback()
+            return
+
+        # Try to show the slot now at the same index; if out of range, show the last
+        new_idx = old_idx if old_idx < len(self._slots) else len(self._slots) - 1
+        self.slot = self._slots[new_idx]
+        title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+        self.setWindowTitle(title)
+        self._load_slot()
 
         if self._on_clear_callback:
             self._on_clear_callback()

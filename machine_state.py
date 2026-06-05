@@ -313,6 +313,15 @@ class CardMemorySlot:
         pattern. It assumes the slot was previously added to a CardMemorySpace via
         `CardMemorySpace.set_slot()` which sets a `_parent` attribute on the slot.
         """
+        self.pattern_type = "Empty"
+        self.header_raw = ""
+        self.preview_raw = ""
+        self.pattern_raw = ""
+        self.filename = ""
+        self.pattern_bytes = []
+        self.pattern_xy = []
+        self.pattern_xyt = []
+        self.pattern_xytacc = []
         parent = self._parent
         parent.slots.remove(self)
 

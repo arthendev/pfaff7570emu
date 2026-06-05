@@ -628,18 +628,27 @@ class PfaffCreativeEmulator(QMainWindow):
                 self.card_memory_tab.update_ui(self.machine_state)
 
             def on_navigate(old_idx, new_idx):
-                # old_idx/new_idx are indices into slots_list
-                new_slot = slots_list[new_idx]
+                # Look up the current slots list dynamically (it may have
+                # changed after a slot was deleted).
+                current_slots = space.sorted_slots()
+                try:
+                    new_slot = current_slots[new_idx]
+                except IndexError:
+                    return True
                 new_key = ("card", space.space_name, id(new_slot))
                 if new_key in self._slot_detail_windows:
                     self._slot_detail_windows[new_key].raise_()
                     self._slot_detail_windows[new_key].activateWindow()
                     return False
-                old_slot = slots_list[old_idx]
-                old_key = ("card", space.space_name, id(old_slot))
-                w = self._slot_detail_windows.pop(old_key, None)
-                if w:
-                    self._slot_detail_windows[new_key] = w
+                try:
+                    old_slot = current_slots[old_idx]
+                except IndexError:
+                    old_slot = None
+                if old_slot is not None:
+                    old_key = ("card", space.space_name, id(old_slot))
+                    w = self._slot_detail_windows.pop(old_key, None)
+                    if w:
+                        self._slot_detail_windows[new_key] = w
                 return True
 
             win = CardSlotDetailWindow(slots_list, idx, on_clear=on_clear,
@@ -936,7 +945,7 @@ class PfaffCreativeEmulator(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Unsaved Machine State Changes",
-                "There are unsaved changes in the machine state. Do you want to save them?",
+                "There are unsaved changes in the machine state.\nDo you want to save them?",
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
                 QMessageBox.Save
             )
