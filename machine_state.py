@@ -604,9 +604,12 @@ class CardMemorySlot:
         return stats
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization"""
+        """Convert to dictionary for JSON serialization.
+        
+        Note: slot_id is not stored — slot positions are dynamic and derived
+        from list order at load time.
+        """
         return {
-            "slot_id": self.slot_id,
             "pattern_type": self.pattern_type,
             "header_raw": self.header_raw,
             "preview_raw": self.preview_raw,
@@ -616,9 +619,13 @@ class CardMemorySlot:
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> 'CardMemorySlot':
-        """Create CardMemorySlot from dictionary"""
+        """Create CardMemorySlot from dictionary.
+        
+        slot_id is ignored from persisted data — it is assigned dynamically
+        based on list position by the caller.
+        """
         slot = CardMemorySlot(
-            slot_id=data.get("slot_id", 0),
+            slot_id=0,
             pattern_type=data.get("pattern_type", ""),
             header_raw=data.get("header_raw", ""),
             preview_raw=data.get("preview_raw", ""),
@@ -692,9 +699,10 @@ class MachineState:
         self.card_9mm = CardMemorySpace("9mm")
         self.card_maxi = CardMemorySpace("MAXI")
         self.card_embroidery = CardMemorySpace("Embroidery")
-        # Card presence and number (controlled by UI)
-        self.card_inserted: bool = False
+        # Card presence and file path (controlled by UI)
+        self.card_file_path: Optional[str] = None
         self.card_number: int = 1
+        self._card_modified: bool = False
         self.machine_model = None
         
         if model_name is not None:
@@ -743,18 +751,126 @@ class MachineState:
         self.card_maxi.clear()
         self.card_embroidery.clear()
 
+    @property
+    def card_inserted(self) -> bool:
+        """Card is inserted when card_file_path is set and the file exists."""
+        if not self.card_file_path:
+            return False
+        resolved = self._resolve_card_path(self.card_file_path)
+        return Path(resolved).exists()
+
+    @property
+    def card_modified(self) -> bool:
+        """True if the card has unsaved changes."""
+        return self._card_modified
+
+    def mark_card_modified(self):
+        """Mark the card state as modified (unsaved changes)."""
+        self._card_modified = True
+
+    def load_card_file(self, file_path: str) -> None:
+        """Load card patterns from a memory card JSON file.
+        
+        The card file format:
+        {
+            "card_number": <int>,
+            "patterns": {
+                "9mm": [...],
+                "MAXI": [...],
+                "Embroidery": [...]
+            }
+        }
+        """
+        file_path = str(Path(file_path).resolve())
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        self.card_number = data.get("card_number", 1)
+        self.card_file_path = self._make_card_path_relative(file_path)
+        self.clear_card_memory()
+        
+        patterns = data.get("patterns", {})
+        if isinstance(patterns, dict):
+            if "9mm" in patterns:
+                self.card_9mm.from_dict(patterns["9mm"])
+            if "MAXI" in patterns:
+                self.card_maxi.from_dict(patterns["MAXI"])
+            if "Embroidery" in patterns:
+                self.card_embroidery.from_dict(patterns["Embroidery"])
+        
+        self._card_modified = False
+        logger.info(f"Loaded card #{self.card_number} from {file_path}")
+
+    def save_card_file(self, file_path: str = None) -> bool:
+        """Save card patterns to a memory card JSON file.
+        
+        If file_path is None, uses the current card_file_path.
+        Returns True on success.
+        """
+        if file_path is None:
+            if not self.card_file_path:
+                logger.warning("No card file path set, cannot save")
+                return False
+            file_path = self._resolve_card_path(self.card_file_path)
+        
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        data = {
+            "card_number": self.card_number,
+            "patterns": {
+                "9mm": self.card_9mm.to_dict(),
+                "MAXI": self.card_maxi.to_dict(),
+                "Embroidery": self.card_embroidery.to_dict(),
+            },
+        }
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        
+        self.card_file_path = self._make_card_path_relative(str(file_path.resolve()))
+        self._card_modified = False
+        logger.info(f"Saved card #{self.card_number} to {file_path}")
+        return True
+
+    def eject_card(self) -> None:
+        """Eject the current card: clear card data and reset card_file_path."""
+        self.clear_card_memory()
+        self.card_file_path = None
+        self.card_number = 1
+        self._card_modified = False
+        logger.info("Card ejected")
+
+    def _resolve_card_path(self, path: str) -> str:
+        """Resolve a card file path: relative paths are resolved relative to the app directory."""
+        import sys
+        base_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+        p = Path(path)
+        if p.is_absolute():
+            return str(p)
+        return str((base_dir / p).resolve())
+
+    def _make_card_path_relative(self, absolute_path: str) -> str:
+        """Convert an absolute card path to relative if it's under the app directory."""
+        import sys
+        base_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+        try:
+            return str(Path(absolute_path).resolve().relative_to(base_dir.resolve()))
+        except ValueError:
+            return absolute_path
+
     def to_dict(self) -> Dict[str, Any]:
-        """Convert machine state to dictionary for JSON serialization"""
+        """Convert machine state to dictionary for JSON serialization.
+        
+        Card patterns are NOT stored here — they live in a separate memory card JSON file.
+        Only the path to the card file is stored.  The card number lives in the card file.
+        """
         return {
             "machine_model": self.machine_model,
             "p_memory_total_size": self.p_memory_total_size,
             "p_memory_slots": [slot.to_dict() for slot in self.p_memory_slots],
             "m_memory": self.m_memory,
-            "card_memory": {
-                "9mm": self.card_9mm.to_dict(),
-                "MAXI": self.card_maxi.to_dict(),
-                "Embroidery": self.card_embroidery.to_dict(),
-            },
+            "card_file_path": self.card_file_path,
         }
     
     def from_dict(self, data: Dict[str, Any]):
@@ -787,17 +903,25 @@ class MachineState:
         if "m_memory" in data:
             self.m_memory = data["m_memory"]
 
-        # Load card memory — new format is a dict with space keys; old format was a plain
-        # list (ignored for backwards compatibility).
+        # card_number is no longer stored in machine state — it lives in the card file.
+        # Ignore any legacy "card_number" key.
+
+        # Clear any currently loaded card data
         self.clear_card_memory()
-        card_data = data.get("card_memory")
-        if isinstance(card_data, dict):
-            if "9mm" in card_data:
-                self.card_9mm.from_dict(card_data["9mm"])
-            if "MAXI" in card_data:
-                self.card_maxi.from_dict(card_data["MAXI"])
-            if "Embroidery" in card_data:
-                self.card_embroidery.from_dict(card_data["Embroidery"])
+
+        # Load card memory from separate card file if path is present
+        card_path = data.get("card_file_path")
+        if card_path:
+            resolved = self._resolve_card_path(card_path)
+            if Path(resolved).exists():
+                self.card_file_path = card_path
+                self.load_card_file(resolved)
+            else:
+                logger.warning(f"Card file not found: {resolved}")
+                self.card_file_path = None
+        else:
+            self.card_file_path = None
+            # Old-format card_memory key is ignored — card patterns now live in separate files.
     
     def save_to_file(self, file_path: str):
         """Save machine state to JSON file"""

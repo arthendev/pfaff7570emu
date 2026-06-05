@@ -4,7 +4,8 @@ Card Memory tab widget
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QFrame, QScrollArea, QTabWidget,
-                             QCheckBox, QSpinBox)
+                             QCheckBox, QSpinBox, QPushButton, QFileDialog,
+                             QInputDialog, QMessageBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QImage, QPixmap, QPainter, QTransform
 
@@ -202,43 +203,76 @@ class CardSpaceTab(QWidget):
 class CardMemoryTab(QWidget):
     """Card Memory tab split into 9mm, MAXI and Embroidery spaces"""
 
+    # Signals emitted to main window
+    card_inserted = pyqtSignal(str)     # path to card file
+    card_ejected = pyqtSignal()
+    card_created = pyqtSignal(str)      # path to new card file
+    card_modified = pyqtSignal()        # emitted when card data changed (for auto-save)
+    auto_save_changed = pyqtSignal(bool)  # emitted when auto-save checkbox toggles
+    card_state_changed = pyqtSignal(bool)  # emitted on any card insert/eject/load; True if card is inserted
+
     def __init__(self, machine_state: MachineState):
         super().__init__()
         self.machine_state = machine_state
+        self._auto_save = False
         self.setup_ui()
 
     def setup_ui(self):
         layout = QVBoxLayout()
 
-        # Top controls: card inserted checkbox and card number selector
+        # ---- Top controls ----
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
 
-        self._card_inserted_checkbox = QCheckBox("Card inserted")
-        self._card_inserted_checkbox.setChecked(False)
-        controls_layout.addWidget(self._card_inserted_checkbox)
+        # Insert Card button
+        self._insert_card_btn = QPushButton("Insert Card")
+        self._insert_card_btn.setToolTip("Choose a memory card JSON file to insert")
+        self._insert_card_btn.clicked.connect(self._on_insert_card)
+        controls_layout.addWidget(self._insert_card_btn)
 
-        card_label = QLabel("Card number:")
-        controls_layout.addWidget(card_label)
+        # Eject Card button
+        self._eject_card_btn = QPushButton("Eject Card")
+        self._eject_card_btn.setToolTip("Remove the current memory card")
+        self._eject_card_btn.setEnabled(False)
+        self._eject_card_btn.clicked.connect(self._on_eject_card)
+        controls_layout.addWidget(self._eject_card_btn)
 
-        self._card_number_spinbox = QSpinBox()
-        self._card_number_spinbox.setRange(0, 255)
-        self._card_number_spinbox.setValue(1)
-        controls_layout.addWidget(self._card_number_spinbox)
+        # Create New Card button
+        self._create_card_btn = QPushButton("Create New Card")
+        self._create_card_btn.setToolTip("Create a new empty memory card file")
+        self._create_card_btn.clicked.connect(self._on_create_card)
+        controls_layout.addWidget(self._create_card_btn)
 
-        # Spacer to push controls to the left
+        # Separator
+        controls_layout.addSpacing(12)
+
+        # Card number label
+        self._card_number_label = QLabel("Card: None")
+        font = QFont()
+        font.setBold(True)
+        self._card_number_label.setFont(font)
+        controls_layout.addWidget(self._card_number_label)
+
+        # Spacer to push remaining controls to the right
         controls_layout.addStretch(1)
+
+        # Save Card state button
+        self._save_card_btn = QPushButton("Save Card state")
+        self._save_card_btn.setToolTip("Save current card state to file")
+        self._save_card_btn.setEnabled(False)
+        self._save_card_btn.clicked.connect(self._on_save_card)
+        controls_layout.addWidget(self._save_card_btn)
+
+        # Save automatically checkbox
+        self._auto_save_checkbox = QCheckBox("Save automatically")
+        self._auto_save_checkbox.setToolTip("Automatically save card file after each pattern store/delete operation")
+        self._auto_save_checkbox.toggled.connect(self._on_auto_save_toggled)
+        controls_layout.addWidget(self._auto_save_checkbox)
 
         layout.addLayout(controls_layout)
 
-        # Wire UI controls to machine_state
-        self._card_inserted_checkbox.setChecked(bool(self.machine_state.card_inserted))
-        self._card_number_spinbox.setValue(int(self.machine_state.card_number))
-
-        self._card_inserted_checkbox.toggled.connect(self._on_card_inserted_toggled)
-        self._card_number_spinbox.valueChanged.connect(self._on_card_number_changed)
-
+        # ---- Card tabs ----
         self._tab_widget = QTabWidget()
 
         self._tab_9mm = CardSpaceTab(self.machine_state.card_9mm)
@@ -252,19 +286,188 @@ class CardMemoryTab(QWidget):
         layout.addWidget(self._tab_widget)
         self.setLayout(layout)
 
+        # Initial UI state
+        self._update_card_ui()
+
     def update_ui(self, machine_state: MachineState):
         """Update UI with new machine state"""
         self.machine_state = machine_state
         self._tab_9mm.update_space(machine_state.card_9mm)
         self._tab_maxi.update_space(machine_state.card_maxi)
         self._tab_embroidery.update_space(machine_state.card_embroidery)
+        self._update_card_ui()
 
-    def _on_card_inserted_toggled(self, checked: bool):
-        """Handler for the 'Card inserted' checkbox toggled signal."""
-        if self.machine_state is not None:
-            self.machine_state.card_inserted = bool(checked)
+    def _update_card_ui(self):
+        """Update button states and card number label based on current machine state."""
+        ms = self.machine_state
+        if ms is None:
+            return
 
-    def _on_card_number_changed(self, val: int):
-        """Handler for the card number spinbox valueChanged signal."""
-        if self.machine_state is not None:
-            self.machine_state.card_number = int(val)
+        card_inserted = ms.card_inserted
+        self._eject_card_btn.setEnabled(card_inserted)
+        self._save_card_btn.setEnabled(card_inserted)
+
+        if card_inserted and ms.card_file_path:
+            self._card_number_label.setText(f"Card: #{ms.card_number}")
+        else:
+            self._card_number_label.setText("Card: None")
+
+        # Notify main window so menu actions stay in sync
+        self.card_state_changed.emit(card_inserted)
+
+    # ------------------------------------------------------------------
+    # Button handlers
+    # ------------------------------------------------------------------
+
+    def _maybe_save_card(self) -> bool:
+        """If the current card has unsaved changes, ask the user what to do.
+        
+        Returns:
+            True  — proceed (saved or discarded)
+            False — cancelled (user wants to stay)
+        """
+        ms = self.machine_state
+        if not ms or not ms.card_inserted or not ms.card_modified:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Card Changes",
+            f"Card #{ms.card_number} has unsaved changes.\nDo you want to save them?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if reply == QMessageBox.Save:
+            try:
+                ms.save_card_file()
+                return True
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save card:\n{str(e)}")
+                return False
+        elif reply == QMessageBox.Discard:
+            return True
+        else:  # Cancel
+            return False
+
+    def _on_insert_card(self):
+        """Show file dialog to choose a memory card JSON file."""
+        # If a card is already inserted, check for unsaved changes first
+        if self.machine_state.card_inserted:
+            if not self._maybe_save_card():
+                return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Insert Memory Card",
+            "",
+            "Memory Card JSON (*.json);;All files (*.*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            self.machine_state.load_card_file(file_path)
+            self.update_ui(self.machine_state)
+            self.card_inserted.emit(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load card file:\n{str(e)}")
+
+    def _on_eject_card(self):
+        """Eject the current card."""
+        if not self._maybe_save_card():
+            return
+        self.machine_state.eject_card()
+        self.update_ui(self.machine_state)
+        self.card_ejected.emit()
+
+    def _on_create_card(self):
+        """Create a new empty memory card file."""
+        # If a card is already inserted, check for unsaved changes first
+        if self.machine_state.card_inserted:
+            if not self._maybe_save_card():
+                return
+
+        # Ask for card number
+        card_num, ok = QInputDialog.getInt(
+            self,
+            "Create New Card",
+            "Card number:",
+            value=1, min=0, max=255
+        )
+        if not ok:
+            return
+
+        # Ask for save location
+        import os, sys
+        from pathlib import Path
+        base_dir = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).parent
+        default_dir = str(base_dir / "memory_cards")
+        os.makedirs(default_dir, exist_ok=True)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Create New Memory Card",
+            str(Path(default_dir) / f"card_{card_num}.json"),
+            "Memory Card JSON (*.json);;All files (*.*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            # Create empty card data
+            card_data = {
+                "card_number": card_num,
+                "patterns": {
+                    "9mm": [],
+                    "MAXI": [],
+                    "Embroidery": [],
+                },
+            }
+            import json
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(card_data, f, indent=2)
+
+            # Load the new card
+            self.machine_state.load_card_file(file_path)
+            self.update_ui(self.machine_state)
+            self.card_created.emit(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create card file:\n{str(e)}")
+
+    def _on_save_card(self):
+        """Save current card state to its file."""
+        if not self.machine_state.card_file_path:
+            return
+        try:
+            self.machine_state.save_card_file()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save card file:\n{str(e)}")
+
+    def _on_auto_save_toggled(self, checked: bool):
+        """Toggle auto-save on card modifications."""
+        self._auto_save = bool(checked)
+        self.auto_save_changed.emit(bool(checked))
+
+    @property
+    def auto_save_enabled(self) -> bool:
+        return self._auto_save
+
+    # ------------------------------------------------------------------
+    # Public API for menu actions
+    # ------------------------------------------------------------------
+
+    def insert_card(self):
+        """Public wrapper for Insert Card action (usable from menu)."""
+        self._on_insert_card()
+
+    def eject_card(self):
+        """Public wrapper for Eject Card action (usable from menu)."""
+        self._on_eject_card()
+
+    def save_card(self):
+        """Public wrapper for Save Card action (usable from menu)."""
+        self._on_save_card()
+
+    def set_auto_save(self, enabled: bool):
+        """Set auto-save state and update checkbox."""
+        self._auto_save_checkbox.setChecked(bool(enabled))

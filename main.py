@@ -63,8 +63,12 @@ class PfaffCreativeEmulator(QMainWindow):
             self.card_memory_tab._tab_maxi.slot_clicked.connect(self._open_slot_detail)
             self.card_memory_tab._tab_embroidery.slot_clicked.connect(self._open_slot_detail)
         except Exception:
-            # Fallback: do nothing if internals are different
             pass
+        # Connect card tab signals
+        self.card_memory_tab.card_inserted.connect(self._on_card_inserted)
+        self.card_memory_tab.card_ejected.connect(self._on_card_ejected)
+        self.card_memory_tab.card_created.connect(self._on_card_created)
+        self.card_memory_tab.card_state_changed.connect(self._update_card_menu_state)
         self.create_menu()
 
         logger.info("Application started")
@@ -244,6 +248,33 @@ class PfaffCreativeEmulator(QMainWindow):
         card_submenu = QMenu("Memory Card", self)
         machine_menu.addMenu(card_submenu)
 
+        insert_card_action = QAction("Insert Card", self)
+        insert_card_action.triggered.connect(self.card_memory_tab.insert_card)
+        card_submenu.addAction(insert_card_action)
+
+        eject_card_action = QAction("Eject Card", self)
+        eject_card_action.triggered.connect(self.card_memory_tab.eject_card)
+        eject_card_action.setEnabled(False)
+        self._eject_card_menu_action = eject_card_action
+        card_submenu.addAction(eject_card_action)
+
+        card_submenu.addSeparator()
+
+        save_card_action = QAction("Save", self)
+        save_card_action.triggered.connect(self.card_memory_tab.save_card)
+        save_card_action.setEnabled(False)
+        self._save_card_menu_action = save_card_action
+        card_submenu.addAction(save_card_action)
+
+        auto_save_action = QAction("Save automatically", self)
+        auto_save_action.setCheckable(True)
+        auto_save_action.setChecked(False)
+        auto_save_action.toggled.connect(self.card_memory_tab.set_auto_save)
+        self.card_memory_tab.auto_save_changed.connect(auto_save_action.setChecked)
+        card_submenu.addAction(auto_save_action)
+
+        card_submenu.addSeparator()
+
         delete_all_card_action = QAction("Delete all", self)
         delete_all_card_action.triggered.connect(self._clear_all_card_memory)
         card_submenu.addAction(delete_all_card_action)
@@ -392,6 +423,8 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def _open_recent_file(self, file_path: str):
         """Open a file from the recent list."""
+        if not self._maybe_save_card():
+            return
         try:
             self.machine_state.load_from_file(file_path)
             self.current_file = file_path
@@ -416,10 +449,14 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def new_file(self):
         """Create a new machine state file"""
+        if not self._maybe_save_card():
+            return
         for slot in self.machine_state.p_memory_slots:
             slot.clear()
         self.machine_state.m_memory = []
         self.machine_state.clear_card_memory()
+        self.machine_state.card_file_path = None
+        self.machine_state._card_modified = False
         self.current_file = None
         self.pmemory_tab.update_ui(self.machine_state)
         self.mmemory_tab.update_ui(self.machine_state)
@@ -430,6 +467,8 @@ class PfaffCreativeEmulator(QMainWindow):
     
     def open_file(self):
         """Open a machine state file"""
+        if not self._maybe_save_card():
+            return
         file_path, _ = QFileDialog.getOpenFileName(
             self, 
             "Open Sewing Machine State",
@@ -585,6 +624,7 @@ class PfaffCreativeEmulator(QMainWindow):
 
             def on_clear():
                 self._set_modified(True)
+                self.machine_state.mark_card_modified()
                 self.card_memory_tab.update_ui(self.machine_state)
 
             def on_navigate(old_idx, new_idx):
@@ -791,6 +831,13 @@ class PfaffCreativeEmulator(QMainWindow):
         self.card_memory_tab.update_ui(self.machine_state)
         logger.info("Memory Card: all slots deleted")
         self._set_modified(True)
+        self.machine_state.mark_card_modified()
+        # Auto-save card file if enabled
+        if self.card_memory_tab.auto_save_enabled and self.machine_state.card_file_path:
+            try:
+                self.machine_state.save_card_file()
+            except Exception as e:
+                logger.warning(f"Auto-save card file after clear_all failed: {e}")
 
     def _on_pmemory_changed(self):
         """Refresh P-Memory tab after a delete or write operation"""
@@ -803,6 +850,34 @@ class PfaffCreativeEmulator(QMainWindow):
         """Refresh Card Memory tab after a write card slot operation"""
         self.card_memory_tab.update_ui(self.machine_state)
         self._set_modified(True)
+        self.machine_state.mark_card_modified()
+        # Auto-save card file if enabled
+        if self.card_memory_tab.auto_save_enabled and self.machine_state.card_file_path:
+            try:
+                self.machine_state.save_card_file()
+                logger.debug("Auto-saved card file after card operation")
+            except Exception as e:
+                logger.warning(f"Auto-save card file failed: {e}")
+
+    def _on_card_inserted(self, file_path: str):
+        """Handle card inserted signal from CardMemoryTab."""
+        self._set_modified(True)
+        logger.info(f"Card inserted: {file_path}")
+
+    def _on_card_ejected(self):
+        """Handle card ejected signal from CardMemoryTab."""
+        self._set_modified(True)
+        logger.info("Card ejected")
+
+    def _on_card_created(self, file_path: str):
+        """Handle card created signal from CardMemoryTab."""
+        self._set_modified(True)
+        logger.info(f"New card created: {file_path}")
+
+    def _update_card_menu_state(self, inserted: bool):
+        """Enable/disable card menu actions based on card insertion state."""
+        self._eject_card_menu_action.setEnabled(inserted)
+        self._save_card_menu_action.setEnabled(inserted)
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""
@@ -821,13 +896,47 @@ class PfaffCreativeEmulator(QMainWindow):
         logger.error(error_msg)
         QMessageBox.critical(self, "Serial Error", error_msg)
     
+    def _maybe_save_card(self) -> bool:
+        """If the current card has unsaved changes, ask the user what to do.
+        
+        Returns:
+            True  — proceed (saved or discarded)
+            False — cancelled (user wants to stay)
+        """
+        ms = self.machine_state
+        if not ms or not ms.card_inserted or not ms.card_modified:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Card Changes",
+            f"Card #{ms.card_number} has unsaved changes.\nDo you want to save them?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if reply == QMessageBox.Save:
+            try:
+                ms.save_card_file()
+                return True
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save card:\n{str(e)}")
+                return False
+        elif reply == QMessageBox.Discard:
+            return True
+        else:  # Cancel
+            return False
+
     def closeEvent(self, event):
         """Handle application close event"""
+        # Check card changes first
+        if not self._maybe_save_card():
+            event.ignore()
+            return
         if self._modified:
             reply = QMessageBox.question(
                 self,
-                "Unsaved Changes",
-                "There are unsaved changes. Do you want to save them?",
+                "Unsaved Machine State Changes",
+                "There are unsaved changes in the machine state. Do you want to save them?",
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
                 QMessageBox.Save
             )
