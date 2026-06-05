@@ -52,8 +52,9 @@ class CardSlotDetailWindow(QDialog):
         self.setWindowTitle(title)
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setMinimumWidth(720)
-        self.setMinimumHeight(860)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(500)
+        self.resize(720, 860)
         self._setup_ui()
         self._load_slot()
 

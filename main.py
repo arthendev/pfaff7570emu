@@ -35,7 +35,7 @@ class PfaffCreativeEmulator(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PFAFF Creative 75xx Emulator")
-        self.setGeometry(100, 100, 1500, 900)
+        self.setGeometry(100, 100, 1600, 900)
         
         # Initialize machine state
         self.machine_state = MachineState()
@@ -89,7 +89,7 @@ class PfaffCreativeEmulator(QMainWindow):
         
         self.tab_widget.addTab(self.pmemory_tab, "P-Memory")
         self.tab_widget.addTab(self.mmemory_tab, "M-Memory")
-        self.tab_widget.addTab(self.card_memory_tab, "Card Memory")
+        self.tab_widget.addTab(self.card_memory_tab, "Memory Card")
         
         splitter.addWidget(self.tab_widget)
         

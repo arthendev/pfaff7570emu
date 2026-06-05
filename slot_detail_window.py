@@ -47,8 +47,9 @@ class SlotDetailWindow(QDialog):
         self.setWindowTitle(f"Slot P {slot_id} - Details")
         self.setWindowFlags(Qt.Window)
         self.setAttribute(Qt.WA_DeleteOnClose)
-        self.setMinimumWidth(720)
-        self.setMinimumHeight(800)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(500)
+        self.resize(720, 800)
         self._setup_ui()
         self._load_slot()
 
