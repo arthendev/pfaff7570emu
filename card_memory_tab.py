@@ -82,11 +82,12 @@ class CardPreviewWidget(QWidget):
 class CardSlotWidget(QFrame):
     """Widget representing a single card memory slot"""
 
-    def __init__(self, slot: CardMemorySlot, on_click=None, is_embroidery: bool = False):
+    def __init__(self, slot: CardMemorySlot, on_click=None, is_embroidery: bool = False, display_index: int = 0):
         super().__init__()
         self.slot = slot
         self._on_click = on_click
         self._is_embroidery = is_embroidery
+        self._display_index = display_index
         self.setup_ui()
         self.setStyleSheet("border: 1px solid #ddd; padding: 5px;")
         if on_click:
@@ -102,15 +103,22 @@ class CardSlotWidget(QFrame):
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
 
-        # No persistent slot number shown — display only pattern info and preview
+        # Slot number on the left (dynamic: recalculated when slots are added/removed)
+        slot_label = QLabel(f"{self._display_index}")
+        slot_label_font = QFont()
+        slot_label_font.setBold(True)
+        slot_label_font.setPointSize(10)
+        slot_label.setFont(slot_label_font)
+        slot_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(slot_label)
 
         right_layout = QVBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(3)
 
-        size_info = f"{self.slot.get_size_bytes()} bytes"
+        size_info = f"{self.slot.get_size_bytes()} B"
         if self.slot.get_size_stitches() > 0:
-            size_info += f"  {self.slot.get_size_stitches()} stitches"
+            size_info += f"  {self.slot.get_size_stitches()} St."
         info_label = QLabel(f"{self.slot.pattern_type}   {size_info}")
         info_font = QFont()
         info_font.setPointSize(8)
@@ -177,6 +185,7 @@ class CardSpaceTab(QWidget):
                 slot,
                 on_click=self.slot_clicked.emit,
                 is_embroidery=self.space.space_name == "Embroidery",
+                display_index=i,
             )
             self._slot_widgets.append(widget)
             self._grid_layout.addWidget(widget, i // columns, i % columns,

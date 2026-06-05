@@ -81,10 +81,11 @@ class CardSlotDetailWindow(QDialog):
         QShortcut(QKeySequence("Left"), self).activated.connect(lambda: self._navigate(-1))
 
         self._slot_label = QLabel()
+        self._name_label = QLabel()
         self._type_label = QLabel()
         self._bytes_label = QLabel()
         self._stitches_label = QLabel()
-        for lbl in (self._slot_label, self._type_label, self._bytes_label, self._stitches_label):
+        for lbl in (self._slot_label, self._name_label, self._type_label, self._bytes_label, self._stitches_label):
             lbl.setFont(bold)
             info_layout.addWidget(lbl)
         info_layout.addStretch()
@@ -247,11 +248,11 @@ class CardSlotDetailWindow(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.clicked.connect(self._clear_slot)
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.clicked.connect(self._clear_slot)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
-        btn_layout.addWidget(self._clear_btn)
+        btn_layout.addWidget(self._delete_btn)
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
 
@@ -783,9 +784,13 @@ class CardSlotDetailWindow(QDialog):
 
     def _load_slot(self):
         """Populate all fields from the current slot data."""
-        # Do not show persistent numeric slot IDs — show filename when available
-        slot_text = f"Slot: {self.slot.filename}" if self.slot.filename else "Slot"
-        self._slot_label.setText(slot_text)
+        # Show slot index and filename separately
+        try:
+            slot_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
+        except StopIteration:
+            slot_idx = "?"
+        self._slot_label.setText(f"Index: {slot_idx}")
+        self._name_label.setText(f"Name: {self.slot.filename}" if self.slot.filename else "Name: (none)")
         self._type_label.setText(f"    Type:  {self.slot.pattern_type}")
         self._bytes_label.setText(f"    Bytes:  {self.slot.get_size_bytes()}")
         self._stitches_label.setText(f"    Stitches:  {self.slot.get_size_stitches()}")
@@ -800,7 +805,7 @@ class CardSlotDetailWindow(QDialog):
         self._populate_header_grid()
         self._populate_pattern_grid()
         self._populate_points_grid()
-        self._clear_btn.setEnabled(self.slot.pattern_type != "Empty")
+        self._delete_btn.setEnabled(self.slot.pattern_type != "Empty")
         self._update_nav_buttons()
 
     def _format_header_raw(self, raw: str) -> str:
@@ -911,8 +916,45 @@ class CardSlotDetailWindow(QDialog):
         self._load_slot()
 
     def _clear_slot(self):
-        """Clear the slot, refresh display, and notify the main window."""
+        """Clear the slot, then navigate to the nearest non-empty slot."""
         self.slot.clear()
-        self.refresh()
+
+        # Find the index of the cleared slot
+        try:
+            current_idx = next(i for i, s in enumerate(self._slots) if s is self.slot)
+        except StopIteration:
+            current_idx = None
+
+        # Search outward for the nearest non-empty slot
+        nearest_idx = None
+        if current_idx is not None:
+            n = len(self._slots)
+            for dist in range(1, n):
+                candidates = []
+                if current_idx - dist >= 0:
+                    candidates.append(current_idx - dist)
+                if current_idx + dist < n:
+                    candidates.append(current_idx + dist)
+                for idx in candidates:
+                    if self._slots[idx].pattern_type != "Empty":
+                        nearest_idx = idx
+                        break
+                if nearest_idx is not None:
+                    break
+
+        if nearest_idx is not None:
+            if self._on_navigate and not self._on_navigate(current_idx, nearest_idx):
+                self.refresh()
+                if self._on_clear_callback:
+                    self._on_clear_callback()
+                return
+            self.slot = self._slots[nearest_idx]
+            title = f"Card Slot - {self.slot.filename}" if self.slot.filename else "Card Slot - Details"
+            self.setWindowTitle(title)
+            self._load_slot()
+        else:
+            # No non-empty slots left — close the window
+            self.close()
+
         if self._on_clear_callback:
             self._on_clear_callback()
