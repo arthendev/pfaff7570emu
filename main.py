@@ -70,6 +70,7 @@ class PfaffCreativeEmulator(QMainWindow):
         self.card_memory_tab.card_created.connect(self._on_card_created)
         self.card_memory_tab.card_state_changed.connect(self._update_card_menu_state)
         self.create_menu()
+        self._update_card_model_support()
 
         logger.info("Application started")
         self._try_auto_connect()
@@ -245,39 +246,39 @@ class PfaffCreativeEmulator(QMainWindow):
         clear_all_action.triggered.connect(self._clear_all_pmemory)
         pmemory_submenu.addAction(clear_all_action)
 
-        card_submenu = QMenu("Memory Card", self)
-        machine_menu.addMenu(card_submenu)
+        self._card_submenu = QMenu("Memory Card", self)
+        machine_menu.addMenu(self._card_submenu)
 
-        insert_card_action = QAction("Insert Card", self)
-        insert_card_action.triggered.connect(self.card_memory_tab.insert_card)
-        card_submenu.addAction(insert_card_action)
+        self._insert_card_menu_action = QAction("Insert Card", self)
+        self._insert_card_menu_action.triggered.connect(self.card_memory_tab.insert_card)
+        self._card_submenu.addAction(self._insert_card_menu_action)
 
         eject_card_action = QAction("Eject Card", self)
         eject_card_action.triggered.connect(self.card_memory_tab.eject_card)
         eject_card_action.setEnabled(False)
         self._eject_card_menu_action = eject_card_action
-        card_submenu.addAction(eject_card_action)
+        self._card_submenu.addAction(eject_card_action)
 
-        card_submenu.addSeparator()
+        self._card_submenu.addSeparator()
 
         save_card_action = QAction("Save", self)
         save_card_action.triggered.connect(self.card_memory_tab.save_card)
         save_card_action.setEnabled(False)
         self._save_card_menu_action = save_card_action
-        card_submenu.addAction(save_card_action)
+        self._card_submenu.addAction(save_card_action)
 
-        auto_save_action = QAction("Save automatically", self)
-        auto_save_action.setCheckable(True)
-        auto_save_action.setChecked(False)
-        auto_save_action.toggled.connect(self.card_memory_tab.set_auto_save)
-        self.card_memory_tab.auto_save_changed.connect(auto_save_action.setChecked)
-        card_submenu.addAction(auto_save_action)
+        self._auto_save_card_menu_action = QAction("Save automatically", self)
+        self._auto_save_card_menu_action.setCheckable(True)
+        self._auto_save_card_menu_action.setChecked(False)
+        self._auto_save_card_menu_action.toggled.connect(self.card_memory_tab.set_auto_save)
+        self.card_memory_tab.auto_save_changed.connect(self._auto_save_card_menu_action.setChecked)
+        self._card_submenu.addAction(self._auto_save_card_menu_action)
 
-        card_submenu.addSeparator()
+        self._card_submenu.addSeparator()
 
-        delete_all_card_action = QAction("Delete all", self)
-        delete_all_card_action.triggered.connect(self._clear_all_card_memory)
-        card_submenu.addAction(delete_all_card_action)
+        self._delete_all_card_menu_action = QAction("Delete all", self)
+        self._delete_all_card_menu_action.triggered.connect(self._clear_all_card_memory)
+        self._card_submenu.addAction(self._delete_all_card_menu_action)
 
         # Settings menu
         settings_menu = menubar.addMenu("Settings")
@@ -373,6 +374,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self._model_actions[saved_model].setChecked(True)
             self.machine_state.configure_model(saved_model)
             self.protocol.configure_model(saved_model)
+        self._update_card_model_support()
 
     # ------------------------------------------------------------------
     # Recent-files helpers
@@ -385,6 +387,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self._model_actions[model].setChecked(True)
             self.protocol.configure_model(model)
             self._config.setdefault("machine", {})["model"] = model
+        self._update_card_model_support()
 
     RECENT_MAX = 20
 
@@ -761,6 +764,7 @@ class PfaffCreativeEmulator(QMainWindow):
         self.machine_state.configure_model(model_name)
         self.protocol.configure_model(model_name)
         self.pmemory_tab.update_ui(self.machine_state)
+        self._update_card_model_support()
         self._config.setdefault("machine", {})["model"] = model_name
         self._save_config()
         logger.info(f"Model set to: {model_name}")
@@ -836,6 +840,8 @@ class PfaffCreativeEmulator(QMainWindow):
 
     def _clear_all_card_memory(self):
         """Clear all Memory Card slots, resetting them to Empty."""
+        if not self.machine_state.supports_card:
+            return
         self.machine_state.clear_card_memory()
         self.card_memory_tab.update_ui(self.machine_state)
         logger.info("Memory Card: all slots deleted")
@@ -883,10 +889,28 @@ class PfaffCreativeEmulator(QMainWindow):
         self._set_modified(True)
         logger.info(f"New card created: {file_path}")
 
+    def _update_card_model_support(self):
+        """Enable or disable Memory Card tab and menu items based on machine model.
+
+        Only PFAFF Creative 7570 supports memory cards.
+        """
+        supported = self.machine_state.supports_card
+        # Tab
+        self.tab_widget.setTabEnabled(2, supported)
+        # Card menu actions
+        self._insert_card_menu_action.setEnabled(supported)
+        self._auto_save_card_menu_action.setEnabled(supported)
+        self._delete_all_card_menu_action.setEnabled(supported)
+        # The card submenu itself
+        self._card_submenu.setEnabled(supported)
+        # Propagate to CardMemoryTab widget
+        self.card_memory_tab.set_card_enabled(supported)
+
     def _update_card_menu_state(self, inserted: bool):
         """Enable/disable card menu actions based on card insertion state."""
-        self._eject_card_menu_action.setEnabled(inserted)
-        self._save_card_menu_action.setEnabled(inserted)
+        supported = self.machine_state.supports_card
+        self._eject_card_menu_action.setEnabled(inserted and supported)
+        self._save_card_menu_action.setEnabled(inserted and supported)
 
     def on_serial_data_received(self, data: bytes):
         """Handle received serial data - pass through protocol dispatcher"""

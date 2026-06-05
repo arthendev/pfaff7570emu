@@ -773,6 +773,11 @@ class MachineState:
         """True if the card has unsaved changes."""
         return self._card_modified
 
+    @property
+    def supports_card(self) -> bool:
+        """True if the current machine model supports Memory Cards (only 7570)."""
+        return self.machine_model == "PFAFF Creative 7570"
+
     def mark_card_modified(self):
         """Mark the card state as modified (unsaved changes)."""
         self._card_modified = True

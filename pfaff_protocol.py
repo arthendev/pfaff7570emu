@@ -152,8 +152,8 @@ class PFAFFProtocol:
         self._raw_cmd_mnemonic_buffer = bytearray()
 
     def _card_available(self) -> bool:
-        """Return True if a card is currently marked as inserted in machine_state."""
-        return self.machine_state.card_inserted
+        """Return True if the current model supports cards AND a card is inserted."""
+        return self.machine_state.supports_card and self.machine_state.card_inserted
 
     def _card_disabled_response(self) -> bytes:
         """Return the bytes to send when card operations are disabled (CTRL_NAK + CTRL_BS)."""

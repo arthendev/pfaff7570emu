@@ -304,8 +304,9 @@ class CardMemoryTab(QWidget):
             return
 
         card_inserted = ms.card_inserted
-        self._eject_card_btn.setEnabled(card_inserted)
-        self._save_card_btn.setEnabled(card_inserted)
+        card_supported = ms.supports_card
+        self._eject_card_btn.setEnabled(card_inserted and card_supported)
+        self._save_card_btn.setEnabled(card_inserted and card_supported)
 
         if card_inserted and ms.card_file_path:
             self._card_number_label.setText(f"Card: #{ms.card_number}")
@@ -351,6 +352,8 @@ class CardMemoryTab(QWidget):
 
     def _on_insert_card(self):
         """Show file dialog to choose a memory card JSON file."""
+        if not self.machine_state.supports_card:
+            return
         # If a card is already inserted, check for unsaved changes first
         if self.machine_state.card_inserted:
             if not self._maybe_save_card():
@@ -374,6 +377,8 @@ class CardMemoryTab(QWidget):
 
     def _on_eject_card(self):
         """Eject the current card."""
+        if not self.machine_state.supports_card:
+            return
         if not self._maybe_save_card():
             return
         self.machine_state.eject_card()
@@ -382,6 +387,8 @@ class CardMemoryTab(QWidget):
 
     def _on_create_card(self):
         """Create a new empty memory card file."""
+        if not self.machine_state.supports_card:
+            return
         # If a card is already inserted, check for unsaved changes first
         if self.machine_state.card_inserted:
             if not self._maybe_save_card():
@@ -436,6 +443,8 @@ class CardMemoryTab(QWidget):
 
     def _on_save_card(self):
         """Save current card state to its file."""
+        if not self.machine_state.supports_card:
+            return
         if not self.machine_state.card_file_path:
             return
         try:
@@ -471,3 +480,11 @@ class CardMemoryTab(QWidget):
     def set_auto_save(self, enabled: bool):
         """Set auto-save state and update checkbox."""
         self._auto_save_checkbox.setChecked(bool(enabled))
+
+    def set_card_enabled(self, enabled: bool):
+        """Enable or disable all card action buttons based on machine model support."""
+        self._insert_card_btn.setEnabled(enabled)
+        self._create_card_btn.setEnabled(enabled)
+        self._eject_card_btn.setEnabled(enabled and self.machine_state.card_inserted)
+        self._save_card_btn.setEnabled(enabled and self.machine_state.card_inserted)
+        self._auto_save_checkbox.setEnabled(enabled)
