@@ -732,9 +732,6 @@ class MachineState:
         self.machine_model = model_name
         self.p_memory_total_size = total_size
         current = len(self.p_memory_slots)
-        if num_slots == 0:
-            for i in range(1, num_slots):
-                self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
         if num_slots > current:
             for i in range(current, num_slots):
                 self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
