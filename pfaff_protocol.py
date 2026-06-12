@@ -1535,6 +1535,11 @@ class PFAFFProtocol:
             pattern_bytes = b""
 
         self._read_card_slot_pattern_data = bytearray(pattern_bytes)
+        # Append trailing zero bytes: 4 for 9mm, 5 for MAXI
+        if stitch_type == "9mm":
+            self._read_card_slot_pattern_data.extend([0x00, 0x00, 0x00, 0x00]) # Real machine seems to send some rubbish bytes here (?)
+        elif stitch_type == "MAXI":
+            self._read_card_slot_pattern_data.extend([0x00, 0x00, 0x00, 0x00, 0x00]) # Real machine seems to send some rubbish bytes here (?)
         self._read_card_slot_offset = 0
 
         # Build first chunk: CTRL_ACK + 00 00 00 00 + <size> + <payload> + <size> + CTRL_ETB + checksum(ascii)
@@ -1544,7 +1549,7 @@ class PFAFFProtocol:
 
         response = bytearray()
         response.append(self.CTRL_ACK)
-        response.extend([0x00, 0x00, 0x00, 0x00])
+        response.extend([0x00, 0x00, 0x00, 0x00]) # Real machine seems to send some rubbish bytes here (?)
         response.append(chunk_size)
         response.extend(chunk_data)
         response.append(chunk_size)
