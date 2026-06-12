@@ -374,6 +374,7 @@ class PfaffCreativeEmulator(QMainWindow):
             self._model_actions[saved_model].setChecked(True)
             self.machine_state.configure_model(saved_model)
             self.protocol.configure_model(saved_model)
+            self.pmemory_tab.update_ui(self.machine_state)
         self._update_card_model_support()
 
     # ------------------------------------------------------------------
