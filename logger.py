@@ -87,7 +87,7 @@ class ConsoleHandler(logging.Handler, QObject):
                     and record.levelno not in self.visible_levels:
                 return
             msg = self.format(record)
-            timestamp = QDateTime.currentDateTime().toString("hh:mm:ss")
+            timestamp = QDateTime.currentDateTime().toString("hh:mm:ss.zzz")
             formatted_msg = f"[{timestamp}] {msg}\n"
             self._log_signal.emit(record.levelno, formatted_msg)
         except Exception:
