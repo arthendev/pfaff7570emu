@@ -134,6 +134,7 @@ class PFAFFProtocol:
         self._write_card_chunk_size_repeat = 0
         self._write_card_chunk_buffer = bytearray()
         self._write_card_chunk_checksum_buf = bytearray()
+        self._write_card_expects_enq = False  # first chunk may omit CTRL_ENQ; subsequent must have it
 
         # Read Card Preview (KB) state machine
         self._read_card_preview_params_buffer = bytearray()
@@ -640,6 +641,7 @@ class PFAFFProtocol:
         self._write_card_pattern_size = 0
         self._write_card_filename_len = 0
         self._write_card_slot_id = None
+        self._write_card_expects_enq = False  # first chunk may omit CTRL_ENQ
         self._state = self._STATE_WRITE_CARD_HEADER
         return b""
 
@@ -734,6 +736,7 @@ class PFAFFProtocol:
         self._write_card_chunk_size_repeat = 0
         self._write_card_chunk_buffer = bytearray()
         self._write_card_chunk_checksum_buf = bytearray()
+        self._write_card_expects_enq = False
 
     def _handle_write_card_data_byte(self, byte: int) -> bytes:
         """Route one incoming byte through the card data chunk sub-state machine."""
@@ -748,8 +751,16 @@ class PFAFFProtocol:
                 self._write_card_chunk_buffer = bytearray()
                 self._write_card_chunk_checksum_buf = bytearray()
                 self._write_card_data_substate = self._CARD_CHUNK_WAIT_SIZE
+            elif self._write_card_expects_enq:
+                # Subsequent chunks (or retransmissions) MUST start with CTRL_ENQ
+                logger.warning(
+                    f"Write Card: expected CTRL_ENQ, got 0x{byte:02X} - NAK"
+                )
+                self._write_card_chunk_buffer = bytearray()
+                self._write_card_chunk_checksum_buf = bytearray()
+                return bytes([self.CTRL_NAK])
             else:
-                # Chunk starts directly with size byte (missing CTRL_ENQ)
+                # First chunk, first transmission – allowed to omit CTRL_ENQ
                 self._write_card_chunk_has_enq = False
                 self._write_card_chunk_size = byte
                 self._write_card_chunk_buffer = bytearray()
@@ -818,7 +829,9 @@ class PFAFFProtocol:
         cs_buf  = self._write_card_chunk_checksum_buf
 
         # Always reset sub-state — ready for next chunk or retransmit.
+        # From now on every chunk (including retransmissions) must start with CTRL_ENQ.
         self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
+        self._write_card_expects_enq = True
 
         if self._write_card_chunk_size_repeat != size:
             logger.warning(
@@ -826,11 +839,6 @@ class PFAFFProtocol:
                 f"(hdr={size}, repeat={size_rep})"
             )
             return bytes([self.CTRL_NAK])
-
-        # Chunks without a leading CTRL_ENQ have anyway incorrect checksum. Why?
-        if not has_enq:
-           logger.warning("Write Card: chunk missing leading CTRL_ENQ")
-           return bytes([self.CTRL_NAK])
 
         # concatenate size, payload, and size repeat for checksum calculation
         data_for_checksum = bytes([size]) + payload + bytes([size_rep])
