@@ -44,6 +44,8 @@ class PFAFFProtocol:
     CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
     CMD_LIST_MMEMORY = "MI"
     CMD_WRITE_MMEMORY_PREFIX = "MS"  # followed by 6 hex-ASCII chars: slot(2)+header(4)
+    CMD_READ_MMEMORY_PREFIX = "MM"   # followed by 2 hex-ASCII chars: slot(2)
+    CMD_DELETE_MMEMORY_PREFIX = "ML" # followed by 2 hex-ASCII chars: slot(2)
     CMD_LIST_CARD = "KI"
     CMD_WRITE_CARD = "KN"
     CMD_READ_CARD_PREVIEW = "KB"
@@ -503,6 +505,10 @@ class PFAFFProtocol:
             return self.handle_read_pmemory_init(cmd[2:])
         if cmd.startswith(self.CMD_WRITE_MMEMORY_PREFIX) and len(cmd) == 8:
             return self.handle_write_mmemory_init(cmd[2:])
+        if cmd.startswith(self.CMD_READ_MMEMORY_PREFIX) and len(cmd) == 4:
+            return self.handle_read_mmemory_init(cmd[2:])
+        if cmd.startswith(self.CMD_DELETE_MMEMORY_PREFIX) and len(cmd) == 4:
+            return self.handle_delete_mmemory(cmd[2:])
         logger.unknown_cmd(f"Unknown text command: {cmd!r}")
         return b""
 
@@ -723,6 +729,78 @@ class PFAFFProtocol:
         self._state = self._STATE_WRITE_MMEMORY_DATA
 
         logger.info(f"Write M-Memory: slot {slot_id}, header={header_hex!r} - ACK, awaiting data chunks")
+        return bytes([self.CTRL_ACK])
+
+    def handle_read_mmemory_init(self, params: str) -> bytes:
+        """Handle 'MM<2 hex chars>' + CTRL_ETX (Read M-Memory) command.
+
+        params is 2 chars: slot_hex(2)
+        On success: sends sequence_raw + CTRL_ETB + checksum + CTRL_ETX, returns to idle.
+        On error (invalid slot or empty): returns CTRL_NAK.
+        """
+        slot_hex = params[0:2]
+
+        try:
+            slot_id = int(slot_hex, 16)
+        except ValueError:
+            logger.warning(f"Read M-Memory: invalid slot hex {slot_hex!r}")
+            return bytes([self.CTRL_NAK])
+
+        if not (0 <= slot_id <= 31):
+            logger.warning(f"Read M-Memory: slot {slot_id} out of range")
+            return bytes([self.CTRL_NAK])
+
+        try:
+            slot = self.machine_state.get_m_memory_slot(slot_id)
+        except IndexError:
+            logger.warning(f"Read M-Memory: slot {slot_id} not found")
+            return bytes([self.CTRL_NAK])
+
+        if not slot.sequence_raw:
+            logger.warning(f"Read M-Memory: slot {slot_id} is empty")
+            return bytes([self.CTRL_NAK])
+
+        data = bytes(slot.sequence_raw)
+        checksum = self._calculate_checksum(data)
+
+        response = bytearray(data)
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+        response.append(self.CTRL_ETX)
+
+        logger.info(
+            f"Read M-Memory: slot {slot_id}, sending {len(data)} bytes, checksum 0x{checksum:02X}"
+        )
+        self._state = self._STATE_IDLE
+        return bytes(response)
+
+    def handle_delete_mmemory(self, slot_hex: str) -> bytes:
+        """Handle 'ML<XX>' + CTRL_ETX (Delete M-Memory) command.
+
+        slot_hex is the 2-character hex-ASCII encoded slot number.
+        Clears the slot data.
+        Returns CTRL_ACK on success, CTRL_NAK on invalid slot or decode error.
+        """
+        try:
+            slot_id = int(slot_hex, 16)
+        except ValueError:
+            logger.warning(f"Delete M-Memory: invalid slot hex {slot_hex!r}")
+            return bytes([self.CTRL_NAK])
+
+        if not (0 <= slot_id <= 31):
+            logger.warning(f"Delete M-Memory: slot {slot_id} out of range")
+            return bytes([self.CTRL_NAK])
+
+        try:
+            slot = self.machine_state.get_m_memory_slot(slot_id)
+        except IndexError:
+            logger.warning(f"Delete M-Memory: slot {slot_id} not found")
+            return bytes([self.CTRL_NAK])
+
+        slot.clear()
+        logger.info(f"Delete M-Memory: slot {slot_id} cleared")
+        if self.on_mmemory_changed:
+            self.on_mmemory_changed()
         return bytes([self.CTRL_ACK])
 
     def _process_write_mmemory_chunk(self) -> bytes:
