@@ -43,6 +43,7 @@ class PFAFFProtocol:
     CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 11 hex-ASCII chars: slot(2)+size(6)+CTRL_ETB+checksum(2)
     CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
     CMD_LIST_MMEMORY = "MI"
+    CMD_WRITE_MMEMORY_PREFIX = "MS"  # followed by 6 hex-ASCII chars: slot(2)+header(4)
     CMD_LIST_CARD = "KI"
     CMD_WRITE_CARD = "KN"
     CMD_READ_CARD_PREVIEW = "KB"
@@ -69,6 +70,9 @@ class PFAFFProtocol:
     _STATE_READ_KS_WAIT_ETX = 17  # after 7 KS params, waiting for CTRL_ETX terminator
     _STATE_READ_KS_WAIT_ACK = 18  # waiting for CTRL_ACK after a KS chunk
     _STATE_WRITE_CARD_WAIT_FINAL_ETX = 19  # after last data chunk ACK, expect final CTRL_ETX
+    _STATE_WRITE_MMEMORY_DATA = 20      # collecting M-Memory chunk payload bytes
+    _STATE_WRITE_MMEMORY_CHECKSUM = 21  # collecting 2-char hex checksum after CTRL_ETB
+    _STATE_WRITE_MMEMORY_WAIT_ETX = 22  # waiting for CTRL_ETX after checksum
 
     # Card data chunk sub-states (used when _state == _STATE_WRITE_CARD_DATA)
     _CARD_CHUNK_WAIT_START  = 0  # waiting for CTRL_ENQ (or bare size byte)
@@ -92,10 +96,11 @@ class PFAFFProtocol:
     # Bell command debounce time (seconds)
     BELL_DEBOUNCE_SECONDS = 0.5
     
-    def __init__(self, machine_state=None, on_pmemory_changed=None, on_card_changed=None):
+    def __init__(self, machine_state=None, on_pmemory_changed=None, on_card_changed=None, on_mmemory_changed=None):
         self.machine_state = machine_state
         self.on_pmemory_changed = on_pmemory_changed  # Optional callback: called when P-Memory is modified
         self.on_card_changed = on_card_changed        # Optional callback: called when card memory is modified
+        self.on_mmemory_changed = on_mmemory_changed  # Optional callback: called when M-Memory is modified
         self._model_name = "PFAFF Creative 7570"
         self.cmd_buffer = bytearray()  # Accumulates bytes for text commands
         self.last_bell_time = 0  # Timestamp of last bell command processed
@@ -152,6 +157,13 @@ class PFAFFProtocol:
 
         # Raw command mnemonic collection (KN, KB, KL — preceded by CTRL_ETX)
         self._raw_cmd_mnemonic_buffer = bytearray()
+
+        # Write M-Memory state machine
+        self._write_mmemory_slot_id = None
+        self._write_mmemory_header = bytearray()
+        self._write_mmemory_data_accumulated = bytearray()
+        self._write_mmemory_chunk_buffer = bytearray()
+        self._write_mmemory_checksum_chars = bytearray()
 
     def _card_available(self) -> bool:
         """Return True if the current model supports cards AND a card is inserted."""
@@ -436,6 +448,39 @@ class PFAFFProtocol:
                             logger.warning(f"Raw cmd: unknown mnemonic {mnemonic!r} - resetting to idle")
                             self._state = self._STATE_IDLE
 
+            elif self._state == self._STATE_WRITE_MMEMORY_DATA:
+                if byte == self.CTRL_EOT:
+                    logger.info("Write M-Memory: CTRL_EOT received - committing")
+                    response.extend(self._commit_write_mmemory())
+                elif byte == self.CTRL_BEL:
+                    logger.warning("Write M-Memory: aborted by CTRL_BEL")
+                    self._abort_write_mmemory()
+                    response.extend(self.handle_bell_command())
+                elif byte == self.CTRL_ETB:
+                    self._write_mmemory_checksum_chars = bytearray()
+                    self._state = self._STATE_WRITE_MMEMORY_CHECKSUM
+                else:
+                    self._write_mmemory_chunk_buffer.append(byte)
+
+            elif self._state == self._STATE_WRITE_MMEMORY_CHECKSUM:
+                if byte == self.CTRL_EOT:
+                    logger.info("Write M-Memory: CTRL_EOT during checksum - aborting")
+                    self._abort_write_mmemory()
+                else:
+                    self._write_mmemory_checksum_chars.append(byte)
+                    if len(self._write_mmemory_checksum_chars) == 2:
+                        self._state = self._STATE_WRITE_MMEMORY_WAIT_ETX
+
+            elif self._state == self._STATE_WRITE_MMEMORY_WAIT_ETX:
+                if byte == self.CTRL_ETX:
+                    response.extend(self._process_write_mmemory_chunk())
+                elif byte == self.CTRL_EOT:
+                    logger.info("Write M-Memory: CTRL_EOT waiting for ETX - aborting")
+                    self._abort_write_mmemory()
+                else:
+                    logger.warning(f"Write M-Memory: expected CTRL_ETX, got 0x{byte:02X} - aborting")
+                    self._abort_write_mmemory()
+
         return bytes(response)
 
     def _dispatch_text_command(self, cmd: str) -> bytes:
@@ -456,6 +501,8 @@ class PFAFFProtocol:
             return self.handle_write_pmemory_init(cmd[2:])
         if cmd.startswith(self.CMD_READ_PMEMORY_PREFIX) and len(cmd) == 7:
             return self.handle_read_pmemory_init(cmd[2:])
+        if cmd.startswith(self.CMD_WRITE_MMEMORY_PREFIX) and len(cmd) == 8:
+            return self.handle_write_mmemory_init(cmd[2:])
         logger.unknown_cmd(f"Unknown text command: {cmd!r}")
         return b""
 
@@ -604,14 +651,14 @@ class PFAFFProtocol:
         for i in range(32):
             if i < len(slots):
                 slot = slots[i]
-                seq_size = len(slot.sequence_raw)
+                seq_size = slot.get_size_patterns() if slot else 0
             else:
                 slot = None
                 seq_size = 0
 
             if slot is not None and seq_size > 0:
                 # Header: first 4 ASCII chars of sequence_header (already hex-ascii)
-                hdr = slot.sequence_header
+                hdr = slot.header_raw
                 if len(hdr) >= 4:
                     header_hex = ''.join(chr(b) for b in hdr[:4])
                 else:
@@ -643,6 +690,96 @@ class PFAFFProtocol:
 
         self._state = self._STATE_IDLE
         return bytes(response)
+
+    def handle_write_mmemory_init(self, params: str) -> bytes:
+        """Handle 'MS<6 hex chars>' + CTRL_ETX (Write M-Memory) command.
+
+        params is 6 chars: slot_hex(2) + header_hex(4)
+        On success: sets up write state, returns CTRL_ACK.
+        On error: returns CTRL_NAK.
+        """
+        slot_hex   = params[0:2]
+        header_hex = params[2:6]
+
+        try:
+            slot_id = int(slot_hex, 16)
+        except ValueError:
+            logger.warning(f"Write M-Memory: invalid slot hex {slot_hex!r}")
+            return bytes([self.CTRL_NAK])
+
+        if not (0 <= slot_id <= 31):
+            logger.warning(f"Write M-Memory: slot {slot_id} out of range")
+            return bytes([self.CTRL_NAK])
+
+        # Ensure 32 M-Memory slots exist
+        if not self.machine_state.m_memory_slots:
+            self.machine_state.init_m_memory_slots()
+
+        self._write_mmemory_slot_id = slot_id
+        self._write_mmemory_header = bytearray(header_hex.encode('ascii'))
+        self._write_mmemory_data_accumulated = bytearray()
+        self._write_mmemory_chunk_buffer = bytearray()
+        self._write_mmemory_checksum_chars = bytearray()
+        self._state = self._STATE_WRITE_MMEMORY_DATA
+
+        logger.info(f"Write M-Memory: slot {slot_id}, header={header_hex!r} - ACK, awaiting data chunks")
+        return bytes([self.CTRL_ACK])
+
+    def _process_write_mmemory_chunk(self) -> bytes:
+        """Verify checksum of the current M-Memory chunk and ACK or NAK."""
+        try:
+            received_checksum = int(self._write_mmemory_checksum_chars.decode('ascii'), 16)
+        except (ValueError, UnicodeDecodeError):
+            logger.warning(
+                f"Write M-Memory: invalid chunk checksum bytes {bytes(self._write_mmemory_checksum_chars)!r}"
+            )
+            self._write_mmemory_chunk_buffer = bytearray()
+            self._state = self._STATE_WRITE_MMEMORY_DATA
+            return bytes([self.CTRL_NAK])
+
+        calculated = self._calculate_checksum(self._write_mmemory_chunk_buffer)
+        if calculated != received_checksum:
+            logger.warning(
+                f"Write M-Memory: chunk checksum mismatch "
+                f"(received 0x{received_checksum:02X}, calculated 0x{calculated:02X})"
+            )
+            self._write_mmemory_chunk_buffer = bytearray()
+            self._state = self._STATE_WRITE_MMEMORY_DATA
+            return bytes([self.CTRL_NAK])
+
+        # Checksum OK — accumulate chunk and await more data or CTRL_EOT
+        self._write_mmemory_data_accumulated.extend(self._write_mmemory_chunk_buffer)
+        self._write_mmemory_chunk_buffer = bytearray()
+        logger.info(
+            f"Write M-Memory: chunk OK ({len(self._write_mmemory_data_accumulated)} bytes accumulated so far)"
+        )
+        self._state = self._STATE_WRITE_MMEMORY_DATA
+        return bytes([self.CTRL_ACK])
+
+    def _commit_write_mmemory(self) -> bytes:
+        """Commit all accumulated data to the target M-Memory slot and return to idle."""
+        slot = self.machine_state.get_m_memory_slot(self._write_mmemory_slot_id)
+        slot.header_raw = list(self._write_mmemory_header)
+        slot.sequence_raw = list(self._write_mmemory_data_accumulated)
+        slot.pattern_xy = []  # preview will be populated later
+
+        logger.info(
+            f"Write M-Memory: slot {self._write_mmemory_slot_id} written "
+            f"(header={bytes(self._write_mmemory_header)!r}, data={len(self._write_mmemory_data_accumulated)} bytes)"
+        )
+        self._abort_write_mmemory()
+        if self.on_mmemory_changed:
+            self.on_mmemory_changed()
+        return bytes([])
+
+    def _abort_write_mmemory(self):
+        """Abort an in-progress M-Memory write and return to idle state."""
+        self._state = self._STATE_IDLE
+        self._write_mmemory_slot_id = None
+        self._write_mmemory_header = bytearray()
+        self._write_mmemory_data_accumulated = bytearray()
+        self._write_mmemory_chunk_buffer = bytearray()
+        self._write_mmemory_checksum_chars = bytearray()
 
     def handle_list_card(self) -> bytes:
         """Handle 'KI' + CTRL_ETX (List Memory Card content) command.
