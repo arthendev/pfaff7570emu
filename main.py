@@ -53,7 +53,8 @@ class PfaffCreativeEmulator(QMainWindow):
         self.serial_handler.error_occurred.connect(self.on_serial_error)
         self.serial_handler.connection_changed.connect(self._on_connection_changed)
         self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed,
-                                       on_card_changed=self._on_card_changed)
+                                       on_card_changed=self._on_card_changed,
+                                       on_mmemory_changed=self._on_mmemory_changed)
         
         # Setup UI
         self.setup_ui()
@@ -680,7 +681,19 @@ class PfaffCreativeEmulator(QMainWindow):
                 existing.activateWindow()
                 return
 
-            win = MMemSlotDetailWindow(self.machine_state.m_memory_slots, slot_id, parent=self)
+            def on_navigate(old_id, new_id):
+                if ("mmemory", new_id) in self._slot_detail_windows:
+                    self._slot_detail_windows[("mmemory", new_id)].raise_()
+                    self._slot_detail_windows[("mmemory", new_id)].activateWindow()
+                    return False
+                old_key = ("mmemory", old_id)
+                w = self._slot_detail_windows.pop(old_key, None)
+                if w:
+                    self._slot_detail_windows[("mmemory", new_id)] = w
+                return True
+
+            win = MMemSlotDetailWindow(self.machine_state.m_memory_slots, slot_id,
+                                       on_navigate=on_navigate, parent=self)
             win.destroyed.connect(lambda: [
                 self._slot_detail_windows.pop(k, None)
                 for k, v in list(self._slot_detail_windows.items()) if v is win
@@ -883,6 +896,11 @@ class PfaffCreativeEmulator(QMainWindow):
         self._set_modified(True)
         for win in list(self._slot_detail_windows.values()):
             win._load_slot()
+
+    def _on_mmemory_changed(self):
+        """Refresh M-Memory tab after a write operation"""
+        self.mmemory_tab.update_ui(self.machine_state)
+        self._set_modified(True)
 
     def _on_card_changed(self):
         """Refresh Card Memory tab after a write card slot operation"""
