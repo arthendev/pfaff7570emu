@@ -898,9 +898,11 @@ class PfaffCreativeEmulator(QMainWindow):
             win._load_slot()
 
     def _on_mmemory_changed(self):
-        """Refresh M-Memory tab after a write operation"""
+        """Refresh M-Memory tab after a write or delete operation"""
         self.mmemory_tab.update_ui(self.machine_state)
         self._set_modified(True)
+        for win in list(self._slot_detail_windows.values()):
+            win._load_slot()
 
     def _on_card_changed(self):
         """Refresh Card Memory tab after a write card slot operation"""
