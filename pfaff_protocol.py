@@ -42,6 +42,7 @@ class PFAFFProtocol:
     CMD_DELETE_PMEMORY_PREFIX = "PL"   # followed by 2 hex-ASCII chars = slot number
     CMD_WRITE_PMEMORY_PREFIX = "PN"   # followed by 11 hex-ASCII chars: slot(2)+size(6)+CTRL_ETB+checksum(2)
     CMD_READ_PMEMORY_PREFIX  = "RM"   # followed by 5 chars: 06(2)+slot(2)+type(1)
+    CMD_LIST_MMEMORY = "MI"
     CMD_LIST_CARD = "KI"
     CMD_WRITE_CARD = "KN"
     CMD_READ_CARD_PREVIEW = "KB"
@@ -442,6 +443,8 @@ class PFAFFProtocol:
         logger.info(f"Text command received: {cmd!r}")
         if cmd == self.CMD_LIST_PMEMORY:
             return self.handle_list_pmemory()
+        if cmd == self.CMD_LIST_MMEMORY:
+            return self.handle_list_mmemory()
         if cmd == self.CMD_LIST_CARD:
             if not self._card_available():
                 logger.info("List Card: no card available - sending NAK")
@@ -563,6 +566,83 @@ class PFAFFProtocol:
             return self._handle_list_pmemory_1475cd()
         else:
             return self._handle_list_pmemory_75xx()
+
+    def handle_list_mmemory(self) -> bytes:
+        """Handle 'MI' + CTRL_ETX (List M-Memory) command.
+
+        Response format (ASCII hex chars):
+          21 + addr_start(LE) + 32×(header(LE) + end_addr(LE)) + 0000 + phantom_end(LE) + addr_end(LE)
+          + CTRL_ETB (raw byte) + checksum (2 ASCII hex chars) + CTRL_ETX (raw byte)
+
+        Checksum is the 8-bit sum of all ASCII data bytes before CTRL_ETB,
+        encoded as 2 ASCII hex chars.
+        """
+        logger.info("List M-Memory command received - sending response")
+
+        # Machine has 8160 bytes of M-Memory
+        # 32 slots × up to 85 stitch patterns in sequence × 3 bytes per pattern = 8160 bytes (2720 patterns)
+        # M-Memory range: 0xC286 to 0xE269 (8160 + 3 bytes)
+        addr_start = 0xC286
+        addr_end   = 0xE269
+
+        def _le16(val: int) -> str:
+            """Format a 16-bit value as 4 hex chars, little-endian (low byte first)."""
+            return f"{(val & 0xFF):02X}{((val >> 8) & 0xFF):02X}"
+
+        ascii_data = bytearray()
+
+        # Slot count (0x21 = 33 = 32 real + 1 phantom)
+        ascii_data.extend(b"21")
+
+        # Start address (little-endian)
+        ascii_data.extend(_le16(addr_start).encode('ascii'))
+
+        # Per-slot entries
+        current_addr = addr_start
+        slots = self.machine_state.m_memory_slots if self.machine_state else []
+
+        for i in range(32):
+            if i < len(slots):
+                slot = slots[i]
+                seq_size = len(slot.sequence_raw)
+            else:
+                slot = None
+                seq_size = 0
+
+            if slot is not None and seq_size > 0:
+                # Header: first 4 ASCII chars of sequence_header (already hex-ascii)
+                hdr = slot.sequence_header
+                if len(hdr) >= 4:
+                    header_hex = ''.join(chr(b) for b in hdr[:4])
+                else:
+                    header_hex = "0000"
+                # Advance end address by 3 bytes per pattern in sequence
+                current_addr = (current_addr + 3 * seq_size) & 0xFFFF
+            else:
+                # Empty slot
+                header_hex = "0000"
+                # Address stays unchanged
+
+            ascii_data.extend(header_hex.encode('ascii'))
+            ascii_data.extend(_le16(current_addr).encode('ascii'))
+
+        # Phantom slot (slot #32): header "0000", end = last_used + 3
+        phantom_end = (current_addr + 3) & 0xFFFF
+        ascii_data.extend(b"0000")
+        ascii_data.extend(_le16(phantom_end).encode('ascii'))
+
+        # End address (little-endian)
+        ascii_data.extend(_le16(addr_end).encode('ascii'))
+
+        checksum = self._calculate_checksum(ascii_data)
+
+        response = bytearray(ascii_data)
+        response.append(self.CTRL_ETB)
+        response.extend(f"{checksum:02X}".encode('ascii'))
+        response.append(self.CTRL_ETX)
+
+        self._state = self._STATE_IDLE
+        return bytes(response)
 
     def handle_list_card(self) -> bytes:
         """Handle 'KI' + CTRL_ETX (List Memory Card content) command.
