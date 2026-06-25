@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
-from machine_state import MachineState, CardMemorySlot
+from machine_state import MachineState, CardMemorySlot, MMemorySlot
 from pmemory_tab import PMemoryTab
 from mmemory_tab import MMemoryTab
 from card_memory_tab import CardMemoryTab
@@ -24,6 +24,7 @@ from pfaff_protocol import PFAFFProtocol
 from preferences_dialog import PreferencesDialog
 from slot_detail_window import SlotDetailWindow
 from card_slot_detail_window import CardSlotDetailWindow
+from mmem_slot_detail_window import MMemSlotDetailWindow
 from logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -57,6 +58,7 @@ class PfaffCreativeEmulator(QMainWindow):
         # Setup UI
         self.setup_ui()
         self.pmemory_tab.slot_clicked.connect(self._open_slot_detail)
+        self.mmemory_tab.slot_clicked.connect(self._open_slot_detail)
         # CardMemoryTab exposes separate CardSpaceTab widgets; connect their signals
         try:
             self.card_memory_tab._tab_9mm.slot_clicked.connect(self._open_slot_detail)
@@ -457,7 +459,8 @@ class PfaffCreativeEmulator(QMainWindow):
             return
         for slot in self.machine_state.p_memory_slots:
             slot.clear()
-        self.machine_state.m_memory = []
+        self.machine_state.m_memory_slots = []
+        self.machine_state.init_m_memory_slots()
         self.machine_state.clear_card_memory()
         self.machine_state.card_file_path = None
         self.machine_state._card_modified = False
@@ -659,6 +662,25 @@ class PfaffCreativeEmulator(QMainWindow):
                                        on_navigate=on_navigate,
                                        machine_model=self.machine_state.machine_model, 
                                        card_no=self.machine_state.card_number, parent=self)
+            win.destroyed.connect(lambda: [
+                self._slot_detail_windows.pop(k, None)
+                for k, v in list(self._slot_detail_windows.items()) if v is win
+            ])
+            self._slot_detail_windows[unique_key] = win
+            win.show()
+            return
+
+        # M-Memory slot
+        if isinstance(slot, MMemorySlot):
+            slot_id = slot.slot_id
+            unique_key = ("mmemory", slot_id)
+            existing = self._slot_detail_windows.get(unique_key)
+            if existing is not None:
+                existing.raise_()
+                existing.activateWindow()
+                return
+
+            win = MMemSlotDetailWindow(self.machine_state.m_memory_slots, slot_id, parent=self)
             win.destroyed.connect(lambda: [
                 self._slot_detail_windows.pop(k, None)
                 for k, v in list(self._slot_detail_windows.items()) if v is win

@@ -13,6 +13,47 @@ logger = logging.getLogger(__name__)
 # ToDo: consider common get_pattern_stats() method that can be used by both MemorySlot and CardMemorySlot
 
 @dataclass
+class MMemorySlot:
+    """Represents a single M-Memory slot — stores a sequence of stitch patterns."""
+    slot_id: int
+    sequence_header: List[int] = field(default_factory=list)  # raw header bytes
+    sequence_raw: List[int] = field(default_factory=list)     # raw sequence bytes
+    pattern_xy: List[int] = field(default_factory=list)       # for preview of first pattern
+
+    def clear(self):
+        """Clear the slot data."""
+        self.sequence_header = []
+        self.sequence_raw = []
+        self.pattern_xy = []
+
+    def get_size_patterns(self) -> int:
+        """Get number of stitch patterns in the sequence."""
+        # The sequence_raw encodes patterns; each pattern entry uses 2 bytes
+        return len(self.sequence_raw) // 2
+
+    def get_size_bytes(self) -> int:
+        """Get total size in bytes (header + raw)."""
+        return len(self.sequence_header) + len(self.sequence_raw)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "slot_id": self.slot_id,
+            "sequence_header": self.sequence_header,
+            "sequence_raw": self.sequence_raw,
+            "pattern_xy": self.pattern_xy,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MMemorySlot":
+        return cls(
+            slot_id=data.get("slot_id", 0),
+            sequence_header=data.get("sequence_header", []),
+            sequence_raw=data.get("sequence_raw", []),
+            pattern_xy=data.get("pattern_xy", []),
+        )
+
+
+@dataclass
 class MemorySlot:
     """Represents a single memory slot"""
     slot_id: int
@@ -704,7 +745,7 @@ class MachineState:
     def __init__(self, model_name: str = None):
         self.p_memory_total_size = None
         self.p_memory_slots: List[MemorySlot] = []
-        self.m_memory: List[int] = []
+        self.m_memory_slots: List[MMemorySlot] = []
         self.card_9mm = CardMemorySpace("9mm")
         self.card_maxi = CardMemorySpace("MAXI")
         self.card_embroidery = CardMemorySpace("Embroidery")
@@ -737,12 +778,26 @@ class MachineState:
                 self.p_memory_slots.append(MemorySlot(slot_id=i, pattern_type="Empty"))
         elif num_slots < current:
             self.p_memory_slots = self.p_memory_slots[:num_slots]
+
+        # Initialize M-Memory slots (always 32, model-independent)
+        if not self.m_memory_slots:
+            self.init_m_memory_slots()
     
     def get_p_memory_slot(self, slot_id: int) -> MemorySlot:
         """Get P-Memory slot by ID"""
         if 0 <= slot_id < len(self.p_memory_slots):
             return self.p_memory_slots[slot_id]
         raise IndexError(f"Invalid slot ID: {slot_id}")
+
+    def init_m_memory_slots(self, num_slots: int = 32):
+        """Initialize M-Memory slots to the given count."""
+        self.m_memory_slots = [MMemorySlot(slot_id=i) for i in range(num_slots)]
+
+    def get_m_memory_slot(self, slot_id: int) -> MMemorySlot:
+        """Get M-Memory slot by ID."""
+        if 0 <= slot_id < len(self.m_memory_slots):
+            return self.m_memory_slots[slot_id]
+        raise IndexError(f"Invalid M-Memory slot ID: {slot_id}")
     
     def set_p_memory_slot(self, slot: MemorySlot):
         """Set P-Memory slot"""
@@ -880,7 +935,7 @@ class MachineState:
             "machine_model": self.machine_model,
             "p_memory_total_size": self.p_memory_total_size,
             "p_memory_slots": [slot.to_dict() for slot in self.p_memory_slots],
-            "m_memory": self.m_memory,
+            "m_memory_slots": [slot.to_dict() for slot in self.m_memory_slots],
             "card_file_path": self.card_file_path,
         }
     
@@ -911,8 +966,11 @@ class MachineState:
                 else:
                     self.p_memory_slots.append(loaded)
 
-        if "m_memory" in data:
-            self.m_memory = data["m_memory"]
+        if "m_memory_slots" in data:
+            self.m_memory_slots = [MMemorySlot.from_dict(s) for s in data["m_memory_slots"]]
+        elif "m_memory" in data:
+            # Legacy: old format stored m_memory as List[int] — ignore and init empty slots
+            self.init_m_memory_slots()
 
         # card_number is no longer stored in machine state — it lives in the card file.
         # Ignore any legacy "card_number" key.
