@@ -16,29 +16,29 @@ logger = logging.getLogger(__name__)
 class MMemorySlot:
     """Represents a single M-Memory slot — stores a sequence of stitch patterns."""
     slot_id: int
-    sequence_header: List[int] = field(default_factory=list)  # raw header bytes
+    header_raw: List[int] = field(default_factory=list)  # raw header bytes
     sequence_raw: List[int] = field(default_factory=list)     # raw sequence bytes
     pattern_xy: List[int] = field(default_factory=list)       # for preview of first pattern
 
     def clear(self):
         """Clear the slot data."""
-        self.sequence_header = []
+        self.header_raw = []
         self.sequence_raw = []
         self.pattern_xy = []
 
     def get_size_patterns(self) -> int:
         """Get number of stitch patterns in the sequence."""
-        # The sequence_raw encodes patterns; each pattern entry uses 2 bytes
-        return len(self.sequence_raw) // 2
+        # The sequence_raw encodes patterns; each pattern entry uses 8 bytes
+        return len(self.sequence_raw) // 8
 
     def get_size_bytes(self) -> int:
         """Get total size in bytes (header + raw)."""
-        return len(self.sequence_header) + len(self.sequence_raw)
+        return len(self.header_raw) + len(self.sequence_raw)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "slot_id": self.slot_id,
-            "sequence_header": self.sequence_header,
+            "header_raw": self.header_raw,
             "sequence_raw": self.sequence_raw,
             "pattern_xy": self.pattern_xy,
         }
@@ -47,7 +47,7 @@ class MMemorySlot:
     def from_dict(cls, data: Dict[str, Any]) -> "MMemorySlot":
         return cls(
             slot_id=data.get("slot_id", 0),
-            sequence_header=data.get("sequence_header", []),
+            header_raw=data.get("header_raw", []),
             sequence_raw=data.get("sequence_raw", []),
             pattern_xy=data.get("pattern_xy", []),
         )
