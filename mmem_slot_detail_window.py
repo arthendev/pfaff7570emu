@@ -4,17 +4,12 @@ M-Memory Slot detail window - shows information about a single M-Memory slot.
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QTextEdit, QGroupBox, QTabWidget, QWidget,
-                             QSizePolicy, QShortcut)
+                             QSizePolicy, QShortcut, QCheckBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QKeySequence
 
 from machine_state import MMemorySlot
 from pmemory_tab import PatternPreview
-
-
-def _bytes_to_hex_str(data: list) -> str:
-    """Convert a list of int bytes to a hex string."""
-    return ' '.join(f"{b:02X}" for b in data)
 
 
 class MMemSlotDetailWindow(QDialog):
@@ -30,7 +25,7 @@ class MMemSlotDetailWindow(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setMinimumWidth(400)
         self.setMinimumHeight(400)
-        self.resize(640, 600)
+        self.resize(720, 800)
         self._setup_ui()
         self._load_slot()
 
@@ -83,6 +78,14 @@ class MMemSlotDetailWindow(QDialog):
         preview_layout.addWidget(self._preview)
         preview_group.setLayout(preview_layout)
         layout.addWidget(preview_group)
+
+        # Logical split checkbox
+        split_row = QHBoxLayout()
+        self._logical_split_cb = QCheckBox("Logical split")
+        self._logical_split_cb.stateChanged.connect(self._refresh_raw_display)
+        split_row.addWidget(self._logical_split_cb)
+        split_row.addStretch()
+        layout.addLayout(split_row)
 
         # Tab widget
         tabs = QTabWidget()
@@ -155,6 +158,24 @@ class MMemSlotDetailWindow(QDialog):
         self._preview.pattern_xy = list(self.slot.pattern_xy)
         self._preview.pattern_type = ""
         self._preview.update()
-        self._header_edit.setPlainText(_bytes_to_hex_str(self.slot.header_raw))
-        self._pattern_edit.setPlainText(_bytes_to_hex_str(self.slot.sequence_raw))
+        self._refresh_raw_display()
         self._update_nav_buttons()
+
+    def _refresh_raw_display(self):
+        """Update header and pattern raw text edits (respects logical split)."""
+        header_text = bytes(self.slot.header_raw).decode('ascii', errors='replace')
+        self._header_edit.setPlainText(header_text)
+        raw_text = bytes(self.slot.sequence_raw).decode('ascii', errors='replace')
+        if self._logical_split_cb.isChecked() and raw_text:
+            lines = []
+            for i in range(0, len(raw_text), 8):
+                group = raw_text[i:i+8]
+                if len(group) >= 8:
+                    group = f"{group[:4]} {group[4:6]} {group[6:8]}"
+                elif len(group) >= 6:
+                    group = f"{group[:4]} {group[4:6]} {group[6:]}"
+                elif len(group) >= 4:
+                    group = f"{group[:4]} {group[4:]}"
+                lines.append(group)
+            raw_text = '\n'.join(lines)
+        self._pattern_edit.setPlainText(raw_text)
