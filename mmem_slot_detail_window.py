@@ -4,7 +4,8 @@ M-Memory Slot detail window - shows information about a single M-Memory slot.
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QTextEdit, QGroupBox, QTabWidget, QWidget,
-                             QSizePolicy, QShortcut, QCheckBox)
+                             QSizePolicy, QShortcut, QCheckBox, QTableWidget,
+                             QTableWidgetItem)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QKeySequence
 
@@ -118,6 +119,22 @@ class MMemSlotDetailWindow(QDialog):
         raw_tab.setLayout(raw_layout)
         tabs.addTab(raw_tab, "Raw data")
 
+        # Tab: Pattern (pattern entries table)
+        pattern_tab = QWidget()
+        pattern_layout = QVBoxLayout()
+        self._pattern_table = QTableWidget()
+        self._pattern_table.setColumnCount(8)
+        self._pattern_table.setHorizontalHeaderLabels(
+            ["#", "Mirror", "Pattern", "Scale", "Pat. group", "Pat. No", "W-Mirror", "L-Mirror"]
+        )
+        self._pattern_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._pattern_table.setSelectionMode(QTableWidget.SingleSelection)
+        self._pattern_table.verticalHeader().setVisible(False)
+        self._pattern_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        pattern_layout.addWidget(self._pattern_table)
+        pattern_tab.setLayout(pattern_layout)
+        tabs.addTab(pattern_tab, "Pattern")
+
         layout.addWidget(tabs)
 
         # Buttons
@@ -159,13 +176,14 @@ class MMemSlotDetailWindow(QDialog):
         self._preview.pattern_type = ""
         self._preview.update()
         self._refresh_raw_display()
+        self._populate_pattern_table()
         self._update_nav_buttons()
 
     def _refresh_raw_display(self):
         """Update header and pattern raw text edits (respects logical split)."""
-        header_text = bytes(self.slot.header_raw).decode('ascii', errors='replace')
+        header_text = self.slot.header_raw
         self._header_edit.setPlainText(header_text)
-        raw_text = bytes(self.slot.sequence_raw).decode('ascii', errors='replace')
+        raw_text = self.slot.sequence_raw
         if self._logical_split_cb.isChecked() and raw_text:
             lines = []
             for i in range(0, len(raw_text), 8):
@@ -179,3 +197,93 @@ class MMemSlotDetailWindow(QDialog):
                 lines.append(group)
             raw_text = '\n'.join(lines)
         self._pattern_edit.setPlainText(raw_text)
+
+    _PAT_GROUP_MAP = {
+        0x0: "9mm",
+        0x2: "MAXI",
+        0x3: "Script",
+        0x4: "Block",
+        0x5: "Outline",
+        0xA: "Cursive",
+    }
+
+    def _populate_pattern_table(self):
+        """Fill the Pattern tab with the sequence of stitch pattern entries."""
+        raw_text = self.slot.sequence_raw
+        n = self.slot.get_size_patterns()
+        mono = QFont("Courier New", 9)
+
+        if n == 0:
+            self._pattern_table.setRowCount(1)
+            it = QTableWidgetItem("--")
+            it.setFont(mono)
+            self._pattern_table.setItem(0, 0, it)
+            for col in range(1, 8):
+                self._pattern_table.setItem(0, col, QTableWidgetItem(""))
+            return
+
+        self._pattern_table.setRowCount(n)
+        for i in range(n):
+            group = raw_text[i * 8 : i * 8 + 8]
+            if len(group) < 8:
+                break
+
+            # Parse the 4 bytes from hex ASCII
+            try:
+                b0 = int(group[0:2], 16)
+                b0h = int(group[0:1], 16)
+                b0l = int(group[1:2], 16)
+                b1 = int(group[2:4], 16)
+                b2 = int(group[4:6], 16)
+                b3 = int(group[6:8], 16)
+            except ValueError:
+                continue
+
+            # Col 0: row number
+            idx_it = QTableWidgetItem(str(i + 1))
+            idx_it.setFont(mono)
+
+            # Col 1: Mirror – high nibble of the first byte
+            mirror_it = QTableWidgetItem(group[0:1])
+            mirror_it.setFont(mono)
+
+            # Col 2: Pattern – low nibble of first byte + full second byte
+            pat_it = QTableWidgetItem(f"{group[1:2]} {group[2:4]}")
+            pat_it.setFont(mono)
+
+            # Col 3: Scale (last two bytes, 4 hex chars with space)
+            scale_it = QTableWidgetItem(f"{group[4:6]} {group[6:8]}")
+            scale_it.setFont(mono)
+
+            # Col 4: Pat. group (low nibble of byte 0 mapped to description)
+            group_name = self._PAT_GROUP_MAP.get(b0l, f"0x{b0l:02X}")
+            group_it = QTableWidgetItem(group_name)
+            group_it.setFont(mono)
+
+            # Col 5: Pat. No (second byte in decimal)
+            pat_no_it = QTableWidgetItem(str(b1))
+            pat_no_it.setFont(mono)
+
+            # Col 6: W-Mirror – bit 3 of Mirror
+            w_mirror = (b0h >> 3) & 1
+            wmirror_it = QTableWidgetItem(str(w_mirror))
+            wmirror_it.setFont(mono)
+
+            # Col 7: L-Mirror – bit 1 of Mirror
+            l_mirror = (b0h >> 1) & 1
+            lmirror_it = QTableWidgetItem(str(l_mirror))
+            lmirror_it.setFont(mono)
+
+            self._pattern_table.setItem(i, 0, idx_it)
+            self._pattern_table.setItem(i, 1, mirror_it)
+            self._pattern_table.setItem(i, 2, pat_it)
+            self._pattern_table.setItem(i, 3, scale_it)
+            self._pattern_table.setItem(i, 4, group_it)
+            self._pattern_table.setItem(i, 5, pat_no_it)
+            self._pattern_table.setItem(i, 6, wmirror_it)
+            self._pattern_table.setItem(i, 7, lmirror_it)
+
+        try:
+            self._pattern_table.resizeColumnsToContents()
+        except Exception:
+            pass
