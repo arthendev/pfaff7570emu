@@ -663,12 +663,8 @@ class PFAFFProtocol:
                 seq_size = 0
 
             if slot is not None and seq_size > 0:
-                # Header: first 4 ASCII chars of sequence_header (already hex-ascii)
-                hdr = slot.header_raw
-                if len(hdr) >= 4:
-                    header_hex = ''.join(chr(b) for b in hdr[:4])
-                else:
-                    header_hex = "0000"
+                # Header: first 4 ASCII chars (already hex-ascii)
+                header_hex = slot.header_raw[:4] if len(slot.header_raw) >= 4 else "0000"
                 # Advance end address by 3 bytes per pattern in sequence
                 current_addr = (current_addr + 3 * seq_size) & 0xFFFF
             else:
@@ -760,7 +756,7 @@ class PFAFFProtocol:
             logger.warning(f"Read M-Memory: slot {slot_id} is empty")
             return bytes([self.CTRL_NAK])
 
-        data = bytes(slot.sequence_raw)
+        data = slot.sequence_raw.encode('ascii')
         checksum = self._calculate_checksum(data)
 
         response = bytearray(data)
@@ -837,8 +833,8 @@ class PFAFFProtocol:
     def _commit_write_mmemory(self) -> bytes:
         """Commit all accumulated data to the target M-Memory slot and return to idle."""
         slot = self.machine_state.get_m_memory_slot(self._write_mmemory_slot_id)
-        slot.header_raw = list(self._write_mmemory_header)
-        slot.sequence_raw = list(self._write_mmemory_data_accumulated)
+        slot.header_raw = self._write_mmemory_header.decode('ascii', errors='replace')
+        slot.sequence_raw = self._write_mmemory_data_accumulated.decode('ascii', errors='replace')
         slot.pattern_xy = []  # preview will be populated later
 
         logger.info(
