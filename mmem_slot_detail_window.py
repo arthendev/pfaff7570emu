@@ -123,9 +123,9 @@ class MMemSlotDetailWindow(QDialog):
         pattern_tab = QWidget()
         pattern_layout = QVBoxLayout()
         self._pattern_table = QTableWidget()
-        self._pattern_table.setColumnCount(8)
+        self._pattern_table.setColumnCount(9)
         self._pattern_table.setHorizontalHeaderLabels(
-            ["#", "Mirror", "Pattern", "Scale", "Pat. group", "Pat. No", "W-Mirror", "L-Mirror"]
+            ["#", "Mirror", "Pattern", "Scale-L", "Scale-W", "Pat. group", "Pat. No", "Mirror-W", "Mirror-L"]
         )
         self._pattern_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._pattern_table.setSelectionMode(QTableWidget.SingleSelection)
@@ -218,7 +218,7 @@ class MMemSlotDetailWindow(QDialog):
             it = QTableWidgetItem("--")
             it.setFont(mono)
             self._pattern_table.setItem(0, 0, it)
-            for col in range(1, 8):
+            for col in range(1, 9):
                 self._pattern_table.setItem(0, col, QTableWidgetItem(""))
             return
 
@@ -231,11 +231,11 @@ class MMemSlotDetailWindow(QDialog):
             # Parse the 4 bytes from hex ASCII
             try:
                 b0 = int(group[0:2], 16)
-                b0h = int(group[0:1], 16)
-                b0l = int(group[1:2], 16)
-                b1 = int(group[2:4], 16)
-                b2 = int(group[4:6], 16)
-                b3 = int(group[6:8], 16)
+                b0h = int(group[0:1], 16) # mirror
+                b0l = int(group[1:2], 16) # pattern group
+                b1 = int(group[2:4], 16)  # pattern number
+                b2 = int(group[4:6], 16)  # scale-L
+                b3 = int(group[6:8], 16)  # scale-W
             except ValueError:
                 continue
 
@@ -244,44 +244,49 @@ class MMemSlotDetailWindow(QDialog):
             idx_it.setFont(mono)
 
             # Col 1: Mirror – high nibble of the first byte
-            mirror_it = QTableWidgetItem(group[0:1])
+            mirror_it = QTableWidgetItem(f"{group[0:1]}")
             mirror_it.setFont(mono)
 
             # Col 2: Pattern – low nibble of first byte + full second byte
             pat_it = QTableWidgetItem(f"{group[1:2]} {group[2:4]}")
             pat_it.setFont(mono)
 
-            # Col 3: Scale (last two bytes, 4 hex chars with space)
-            scale_it = QTableWidgetItem(f"{group[4:6]} {group[6:8]}")
-            scale_it.setFont(mono)
+            # Col 3: Scale-L (second byte)
+            scalel_it = QTableWidgetItem(f"{group[4:6]}")
+            scalel_it.setFont(mono)
 
-            # Col 4: Pat. group (low nibble of byte 0 mapped to description)
+            # Col 4: Scale-W (third byte)
+            scalew_it = QTableWidgetItem(f"{group[6:8]}")
+            scalew_it.setFont(mono)
+
+            # Col 5 : Pat. group (low nibble of byte 0 mapped to description)
             group_name = self._PAT_GROUP_MAP.get(b0l, f"0x{b0l:02X}")
             group_it = QTableWidgetItem(group_name)
             group_it.setFont(mono)
 
-            # Col 5: Pat. No (second byte in decimal)
+            # Col 6: Pat. No (second byte in decimal)
             pat_no_it = QTableWidgetItem(str(b1))
             pat_no_it.setFont(mono)
 
-            # Col 6: W-Mirror – bit 3 of Mirror
-            w_mirror = (b0h >> 3) & 1
-            wmirror_it = QTableWidgetItem(str(w_mirror))
-            wmirror_it.setFont(mono)
+            # Col 7: Mirror-W – bit 3 of Mirror
+            mirror_w = (b0h >> 3) & 1
+            mirrorw_it = QTableWidgetItem(str(mirror_w))
+            mirrorw_it.setFont(mono)
 
-            # Col 7: L-Mirror – bit 1 of Mirror
-            l_mirror = (b0h >> 1) & 1
-            lmirror_it = QTableWidgetItem(str(l_mirror))
-            lmirror_it.setFont(mono)
+            # Col 8: Mirror-L – bit 1 of Mirror
+            mirror_l = (b0h >> 1) & 1
+            mirrorl_it = QTableWidgetItem(str(mirror_l))
+            mirrorl_it.setFont(mono)
 
             self._pattern_table.setItem(i, 0, idx_it)
             self._pattern_table.setItem(i, 1, mirror_it)
             self._pattern_table.setItem(i, 2, pat_it)
-            self._pattern_table.setItem(i, 3, scale_it)
-            self._pattern_table.setItem(i, 4, group_it)
-            self._pattern_table.setItem(i, 5, pat_no_it)
-            self._pattern_table.setItem(i, 6, wmirror_it)
-            self._pattern_table.setItem(i, 7, lmirror_it)
+            self._pattern_table.setItem(i, 3, scalel_it)
+            self._pattern_table.setItem(i, 4, scalew_it)
+            self._pattern_table.setItem(i, 5, group_it)
+            self._pattern_table.setItem(i, 6, pat_no_it)
+            self._pattern_table.setItem(i, 7, mirrorw_it)
+            self._pattern_table.setItem(i, 8, mirrorl_it)
 
         try:
             self._pattern_table.resizeColumnsToContents()
