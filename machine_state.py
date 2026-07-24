@@ -738,7 +738,7 @@ class MachineState:
     MODELS = {
         "PFAFF Creative 7570":    (40710, 30), # From real machine
         "PFAFF Creative 7550":    (40710, 30), # From real machine
-        "PFAFF Creative 1475 CD": (5000, 16),  # Arbitrary pick, need real ones
+        "PFAFF Creative 1475 CD": (6460, 16),  # From real machine
     }
 
     def __init__(self, model_name: str = None):
