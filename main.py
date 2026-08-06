@@ -233,7 +233,7 @@ class PfaffCreativeEmulator(QMainWindow):
         model_group = QActionGroup(self)
         model_group.setExclusive(True)
         self._model_actions = {}
-        for model_name in ("PFAFF Creative 7570", "PFAFF Creative 7550", "PFAFF Creative 1475 CD"):
+        for model_name in ("PFAFF Creative 7570", "PFAFF Creative 7550", "PFAFF Creative 1475 CD", "PFAFF Creative 1475A"):
             action = QAction(model_name, self)
             action.setCheckable(True)
             action.triggered.connect(lambda checked, m=model_name: self._on_model_selected(m))

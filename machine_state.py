@@ -739,6 +739,7 @@ class MachineState:
         "PFAFF Creative 7570":    (40710, 30), # From real machine
         "PFAFF Creative 7550":    (40710, 30), # From real machine
         "PFAFF Creative 1475 CD": (6460, 16),  # From real machine
+        "PFAFF Creative 1475A":   (6460, 16),  # Guess
     }
 
     def __init__(self, model_name: str = None):
@@ -763,8 +764,9 @@ class MachineState:
             raise ValueError(f"Unknown model: {model_name}")
         
         current_model = self.machine_model
-        if (current_model == "PFAFF Creative 1475 CD" and model_name != "PFAFF Creative 1475 CD") \
-            or (current_model != "PFAFF Creative 1475 CD" and model_name == "PFAFF Creative 1475 CD"):
+        is_current_1475 = current_model in ("PFAFF Creative 1475 CD", "PFAFF Creative 1475A")
+        is_new_1475 = model_name in ("PFAFF Creative 1475 CD", "PFAFF Creative 1475A")
+        if is_current_1475 != is_new_1475:
             logger.warning(f"Switching from {current_model} to {model_name} - resetting all P-Memory slots to Empty to avoid stale data issues.")
             self.p_memory_slots: List[MemorySlot] = []
         

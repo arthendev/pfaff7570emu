@@ -92,8 +92,9 @@ class PFAFFProtocol:
     MODEL_BELL_STRINGS = {
         "PFAFF Creative 7570":    "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1", # From real machine
         "PFAFF Creative 7550":    "Copyright 1992,-93,-94    G.M. PFAFF AG Creative 7550 CD  Vers. 2.0", # From real machine
-        "PFAFF Creative 1475 CD": "Copyright 1992,-93,-94    G.M. PFAFF AG Creative 1475 CD  Vers. 1.0", # Guess
-    }
+        "PFAFF Creative 1475 CD": "Copyright 1990, 1991,     G.M. PFAFF AG Creative 1475 CD  Vers. 4", # Guess
+        "PFAFF Creative 1475A":   "Copyright 1990,-91,-92    G.M. PFAFF AG Creative 1475A    Vers. 1", # Guess
+}
 
     # Bell command debounce time (seconds)
     BELL_DEBOUNCE_SECONDS = 0.5
@@ -601,7 +602,7 @@ class PFAFFProtocol:
         self.last_bell_time = current_time
         
         # Build response: identification string + CTRL_ETX
-        resp_ident = self.MODEL_BELL_STRINGS.get(self._model_name, self.MODEL_BELL_STRINGS["PFAFF Creative 7570"])
+        resp_ident = self.MODEL_BELL_STRINGS[self._model_name]
 
         response = bytearray()
         response.extend(resp_ident.encode('ascii'))
@@ -615,7 +616,7 @@ class PFAFFProtocol:
 
         Dispatches to the model-specific implementation.
         """
-        if self._model_name == "PFAFF Creative 1475 CD":
+        if self._model_name == "PFAFF Creative 1475 CD" or self._model_name == "PFAFF Creative 1475A":
             return self._handle_list_pmemory_1475cd()
         else:
             return self._handle_list_pmemory_75xx()
@@ -1350,7 +1351,7 @@ class PFAFFProtocol:
 
         Dispatches to the model-specific implementation.
         """
-        if self._model_name == "PFAFF Creative 1475 CD":
+        if self._model_name == "PFAFF Creative 1475 CD" or self._model_name == "PFAFF Creative 1475A":
             return self._handle_write_pmemory_init_1475cd(params)
         else:
             return self._handle_write_pmemory_init_75xx(params)
