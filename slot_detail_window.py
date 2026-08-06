@@ -277,7 +277,7 @@ class SlotDetailWindow(QDialog):
 
     def _populate_header_grid(self):
         """Populate the header byte analysis grid (dispatches by machine model)."""
-        if self._machine_model == "PFAFF Creative 1475 CD":
+        if self._machine_model == "PFAFF Creative 1475 CD" or self._machine_model == "PFAFF Creative 1475A":
             return self._populate_header_grid_1475cd()
         else:
             return self._populate_header_grid_75xx()
