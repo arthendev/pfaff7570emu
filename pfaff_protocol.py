@@ -92,9 +92,10 @@ class PFAFFProtocol:
     MODEL_BELL_STRINGS = {
         "PFAFF Creative 7570":    "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1", # From real machine
         "PFAFF Creative 7550":    "Copyright 1992,-93,-94    G.M. PFAFF AG Creative 7550 CD  Vers. 2.0", # From real machine
-        "PFAFF Creative 1475 CD": "Copyright 1990, 1991,     G.M. PFAFF AG Creative 1475 CD  Vers. 4", # Guess
-        "PFAFF Creative 1475A":   "Copyright 1990,-91,-92    G.M. PFAFF AG Creative 1475A    Vers. 1", # Guess
+        "PFAFF Creative 1475 CD": "Copyright 1990, 1991,     G.M. PFAFF AG      Creative 1475 CD  Vers. 4  ", # From real machine
+        "PFAFF Creative 1475A":   "Copyright 1990, 1991, 1992,    G.M. PFAFF AG Creative 1475A    Vers. 1  ", # From real machine
 }
+    # "PFAFF Creative 7570":    "Copyright 1992 - 96       G.M. PFAFF AG Creative 7570D    Vers. 2.0", # From real machine
 
     # Bell command debounce time (seconds)
     BELL_DEBOUNCE_SECONDS = 0.5
