@@ -99,6 +99,9 @@ class PFAFFProtocol:
 
     # Bell command debounce time (seconds)
     BELL_DEBOUNCE_SECONDS = 0.5
+
+    # Models that use the 1475-family protocol variant (single-chunk P-Memory reads, etc.)
+    MODELS_1475 = ("PFAFF Creative 1475 CD", "PFAFF Creative 1475A")
     
     def __init__(self, machine_state=None, on_pmemory_changed=None, on_card_changed=None, on_mmemory_changed=None):
         self.machine_state = machine_state
@@ -617,7 +620,7 @@ class PFAFFProtocol:
 
         Dispatches to the model-specific implementation.
         """
-        if self._model_name == "PFAFF Creative 1475 CD" or self._model_name == "PFAFF Creative 1475A":
+        if self._model_name in self.MODELS_1475:
             return self._handle_list_pmemory_1475cd()
         else:
             return self._handle_list_pmemory_75xx()
@@ -1352,7 +1355,7 @@ class PFAFFProtocol:
 
         Dispatches to the model-specific implementation.
         """
-        if self._model_name == "PFAFF Creative 1475 CD" or self._model_name == "PFAFF Creative 1475A":
+        if self._model_name in self.MODELS_1475:
             return self._handle_write_pmemory_init_1475cd(params)
         else:
             return self._handle_write_pmemory_init_75xx(params)
@@ -1954,7 +1957,9 @@ class PFAFFProtocol:
         """Handle 'RM<5 chars>' + CTRL_ETX (Read P-Memory) command.
 
         params is 5 chars: fixed_06(2) + slot_hex(2) + pattern_type(1)
-        Responds with slot data in hex-ASCII chunks of up to READ_CHUNK_SIZE_PMEM_<pattern_type> chars each.
+        For 75xx models the slot data is sent in hex-ASCII chunks of up to
+        READ_CHUNK_SIZE_PMEM_<pattern_type> chars each.
+        1475-family models send the whole pattern in a single chunk.
         Each chunk is followed by CTRL_ETB + 2-char hex checksum.
         The last chunk additionally gets CTRL_ETX appended after the checksum.
         Returns NAK if params are invalid, slot is out of range, or slot is empty.
@@ -2002,7 +2007,7 @@ class PFAFFProtocol:
             for i in range(0, len(pattern_xy) - 1, 2):
                 self._read_data.extend(f"{pattern_xy[i]:03d}{pattern_xy[i+1]:02d}".encode('ascii'))
             self._read_offset = 0
-            self._read_chunk_size = self.READ_CHUNK_SIZE_PMEM_9MM
+            self._read_chunk_size = self.READ_CHUNK_SIZE_PMEM_9MM if self._model_name not in self.MODELS_1475 else len(self._read_data)
         elif slot.pattern_type == "MAXI":
             # Encode slot data as 3-digit x + 2-digit y + side transport with sign
             self._read_data = bytearray()
@@ -2013,7 +2018,7 @@ class PFAFFProtocol:
                 side = pattern_bytes[i+2]
                 self._read_data.extend(f"{x:03d}{y:02d}{side:+d}".encode('ascii'))
             self._read_offset = 0
-            self._read_chunk_size = self.READ_CHUNK_SIZE_PMEM_MAXI
+            self._read_chunk_size = self.READ_CHUNK_SIZE_PMEM_MAXI if self._model_name not in self.MODELS_1475 else len(self._read_data)
         else:
             logger.warning(f"Read P-Memory: unknown pattern type {slot.pattern_type} in slot {slot_id}")
             return bytes([self.CTRL_NAK])
