@@ -1309,6 +1309,10 @@ class PFAFFProtocol:
         response.append(self.CTRL_ETB)
         response.extend(f"{checksum:02X}".encode('ascii'))
 
+        # 1475A adds an extra CTRL_ETX after the checksum
+        if self._model_name == "PFAFF Creative 1475A":
+            response.append(self.CTRL_ETX)
+
         self._state = self._STATE_WAIT_ACK
         return bytes(response)
     
