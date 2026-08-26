@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PFAFF Creative 75xx Emulator
+Creative 75xx/1475cd Emulator
 Main application entry point
 """
 
@@ -30,12 +30,12 @@ from logger import setup_logger
 logger = setup_logger(__name__)
 
 
-class PfaffCreativeEmulator(QMainWindow):
+class Creative75xxEmulator(QMainWindow):
     """Main application window for the sewing machine emulator"""
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PFAFF Creative 75xx Emulator")
+        self.setWindowTitle("Creative 75xx/1475cd Emulator")
         self.setGeometry(100, 100, 1600, 900)
         
         # Initialize machine state
@@ -311,9 +311,9 @@ class PfaffCreativeEmulator(QMainWindow):
         """Rebuild the window title from the current file name and dirty flag."""
         suffix = " *" if self._modified else ""
         if self._title_name:
-            self.setWindowTitle(f"PFAFF Creative 75xx Emulator - {self._title_name}{suffix}")
+            self.setWindowTitle(f"Creative 75xx/1475cd Emulator - {self._title_name}{suffix}")
         else:
-            self.setWindowTitle(f"PFAFF Creative 75xx Emulator{suffix}")
+            self.setWindowTitle(f"Creative 75xx/1475cd Emulator{suffix}")
 
     # ------------------------------------------------------------------
     # Config persistence
@@ -741,9 +741,9 @@ class PfaffCreativeEmulator(QMainWindow):
         """Show the About dialog."""
         QMessageBox.about(
             self,
-            "About PFAFF Creative 75xx Emulator",
-            "<h3>PFAFF Creative 75xx Emulator</h3>"
-            "<p>An emulator for the PFAFF Creative 7570, 7550 and 1475 CD sewing machines, "
+            "About Creative 75xx/1475cd Emulator",
+            "<h3>Creative 75xx/1475cd Emulator</h3>"
+            "<p>An emulator of communication interference of the PFAFF Creative 7570, 7550 and 1475 CD sewing machines, "
             "enabling experiments with communication over a serial interface.</p>"
             "<b>Project:</b> "
             '<a href="https://github.com/arthendev/pfaff7570emu">'
@@ -1032,7 +1032,7 @@ class PfaffCreativeEmulator(QMainWindow):
 def main():
     """Application entry point"""
     app = QApplication(sys.argv)
-    window = PfaffCreativeEmulator()
+    window = Creative75xxEmulator()
     window.show()
     sys.exit(app.exec_())
 
