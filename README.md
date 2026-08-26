@@ -1,5 +1,5 @@
-# Pfaff 7570 Interface Emulator
-Communication Interface emulator of Pfaff Creative 7570, 7550, 1475CD
+# Creative 75xx/1475cd Interface Emulator
+Communication Interface emulator of Pfaff Creative 7570, 7550, 1475CD sewing machines
 
 I created this tool as a help in:
 - understanding the communication protocol
