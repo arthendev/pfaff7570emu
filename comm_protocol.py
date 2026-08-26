@@ -1,5 +1,5 @@
 """
-PFAFF protocol handler
+Machine protocol handler
 Handles communication protocol with the sewing machine
 """
 
@@ -11,8 +11,8 @@ import time
 logger = logging.getLogger(__name__)
 
 
-class PFAFFProtocol:
-    """PFAFF sewing machine protocol handler"""
+class CommProtocol:
+    """Sewing machine communication protocol handler"""
     
     # Control characters
     CTRL_ETX = 0x03 # End of Text
