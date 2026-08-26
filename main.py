@@ -20,7 +20,7 @@ from mmemory_tab import MMemoryTab
 from card_memory_tab import CardMemoryTab
 from serial_connection import SerialConnectionDialog
 from serial_handler import SerialHandler
-from pfaff_protocol import PFAFFProtocol
+from comm_protocol import CommProtocol
 from preferences_dialog import PreferencesDialog
 from slot_detail_window import SlotDetailWindow
 from card_slot_detail_window import CardSlotDetailWindow
@@ -52,7 +52,7 @@ class Creative75xxEmulator(QMainWindow):
         self.serial_handler.data_received.connect(self.on_serial_data_received)
         self.serial_handler.error_occurred.connect(self.on_serial_error)
         self.serial_handler.connection_changed.connect(self._on_connection_changed)
-        self.protocol = PFAFFProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed,
+        self.protocol = CommProtocol(self.machine_state, on_pmemory_changed=self._on_pmemory_changed,
                                        on_card_changed=self._on_card_changed,
                                        on_mmemory_changed=self._on_mmemory_changed)
         
