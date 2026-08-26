@@ -5,6 +5,3 @@ I created this tool as a help in:
 - understanding the communication protocol
 - developing a custom stitch design & stitch transfer software
   - enabling work on the project without having the sewing machine connected to PC and avoiding sending gibberish to it
-  
-<img width="1496" height="962" alt="pfaff7570emu" src="https://github.com/user-attachments/assets/a38b3b83-300a-4899-8349-15bc598c1179" />
-
