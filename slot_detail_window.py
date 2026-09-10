@@ -469,7 +469,7 @@ class SlotDetailWindow(QDialog):
             mapping = {
                 0: ("y_min_norm", "min(ys)"),
                 1: ("y_max_norm", "max(ys)"),
-                2: (None,         "Unknown"),
+                2: ("span_x_mm",  "span_x_mm"),
                 3: ("long_scale", "Longitudinal scaling"), # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
             }
 
