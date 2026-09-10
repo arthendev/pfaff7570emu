@@ -190,6 +190,7 @@ class MemorySlot:
             "y_min_to_bound": None,  # 0x36 - y_min
             "y_min_symmetry": None,  # this one is tricky; used for memory card upload
             "span_x": None, "span_y": None,
+            "span_x_mm": None, "span_y_mm": None,
             "dx_max": None, "dx_min": None,
             "dx_min_abs": None, "dx_abs_max": None,
             "dy_max": None, "dy_min": None,
@@ -256,6 +257,8 @@ class MemorySlot:
 
         stats["span_x"] = stats["x_max"] - stats["x_min"]
         stats["span_y"] = stats["y_max"] - stats["y_min"]
+        stats["span_x_mm"] = stats["span_x"] // 6
+        stats["span_y_mm"] = stats["span_y"] // 6
         if len(xs) > 1:
             dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]
             dys = [ys[i + 1] - ys[i] for i in range(len(ys) - 1)]
