@@ -88,6 +88,11 @@ class CommProtocol:
     READ_CHUNK_SIZE_PMEM_MAXI = 350
     READ_CHUNK_SIZE_CARD = 0x80  # 128 bytes per chunk for card read operations (KB and KS)
 
+    # Number of bytes per thread-colour entry in the KN (write card) payload.
+    # The colour block sits between the preview image and the stitch pattern and
+    # holds (colour_count - 1) entries, since the first colour is implicit.
+    CARD_COLOR_ENTRY_SIZE = 0x120
+
     # Bell identification strings per model
     MODEL_BELL_STRINGS = {
         "PFAFF Creative 7570":    "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1", # From real machine
@@ -139,6 +144,8 @@ class CommProtocol:
         self._write_card_preview_size = 0
         self._write_card_pattern_size = 0
         self._write_card_filename_len = 0
+        self._write_card_color_count = 0
+        self._write_card_colors_size = 0
         self._write_card_slot_id = None
         self._write_card_data_accumulated = bytearray()
         self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
@@ -936,6 +943,8 @@ class CommProtocol:
         self._write_card_preview_size = 0
         self._write_card_pattern_size = 0
         self._write_card_filename_len = 0
+        self._write_card_color_count = 0
+        self._write_card_colors_size = 0
         self._write_card_slot_id = None
         self._write_card_expects_enq = False  # first chunk may omit CTRL_ENQ
         self._state = self._STATE_WRITE_CARD_HEADER
@@ -947,8 +956,9 @@ class CommProtocol:
         Header layout (raw bytes, 0-indexed):
           [6]     stitch type: 0x01=9mm, 0x02=MAXI, 0x03=Embroidery
           [24-25] preview image size in bytes (big-endian uint16)
-          [26-27] pattern data size in bytes (big-endian uint16)
-          [28]    filename field length including null-terminator
+          [26]    number of thread colours for the pattern
+          [27-28] pattern data size in bytes (big-endian uint16)
+          [29]    filename field length including null-terminator
 
         Any byte value is valid; the header is delimited by byte count (30).
         The CTRL_ETX terminator is received separately in _STATE_WRITE_CARD_WAIT_ETX.
@@ -976,6 +986,11 @@ class CommProtocol:
             return bytes([self.CTRL_NAK])
 
         self._write_card_preview_size = (buf[24] << 8) | buf[25]
+        # Thread-colour block length. The header stores the total number of colours;
+        # the first colour is implicit, so (count - 1) entries are transmitted,
+        # each CARD_COLOR_ENTRY_SIZE (0x120) bytes long.
+        self._write_card_color_count = buf[26]
+        self._write_card_colors_size = max(0, buf[26] - 1) * self.CARD_COLOR_ENTRY_SIZE
         self._write_card_pattern_size = (buf[27] << 8) | buf[28]
         self._write_card_filename_len = buf[29]
         self._write_card_header_raw = bytes(buf)
@@ -1001,6 +1016,7 @@ class CommProtocol:
         logger.info(
             f"Write Card: {self._write_card_stitch_type} pattern assigned to slot {slot_id}, "
             f"preview={self._write_card_preview_size} bytes, "
+            f"colors={self._write_card_color_count} ({self._write_card_colors_size} bytes), "
             f"pattern={self._write_card_pattern_size} bytes, "
             f"filename_len={self._write_card_filename_len} - ACK 0x{response_code:02X} 0x{response_slot:02X}"
         )
@@ -1024,6 +1040,8 @@ class CommProtocol:
         self._write_card_preview_size = 0
         self._write_card_pattern_size = 0
         self._write_card_filename_len = 0
+        self._write_card_color_count = 0
+        self._write_card_colors_size = 0
         self._write_card_slot_id = None
         self._write_card_data_accumulated = bytearray()
         self._write_card_data_substate = self._CARD_CHUNK_WAIT_START
@@ -1152,6 +1170,7 @@ class CommProtocol:
         total_expected = (
             self._write_card_filename_len
             + self._write_card_preview_size
+            + self._write_card_colors_size
             + self._write_card_pattern_size
         )
         total_received = len(self._write_card_data_accumulated)
@@ -1171,11 +1190,12 @@ class CommProtocol:
         """Decode accumulated card payload and store it in the appropriate card space.
 
         Payload layout (lengths from the KN header):
-          [0 : fn_len]                    → filename bytes (incl. null terminator)
-          [fn_len : fn_len+prev_size]     → preview image (raw bytes)
-          [fn_len+prev_size : ...+pat_sz] → stitch pattern (raw bytes)
+          [0 : fn_len]                              → filename bytes (incl. null terminator)
+          [fn_len : fn_len+prev_size]               → preview image (raw bytes)
+          [.. : ..+colors_size]                     → thread colours (raw bytes)
+          [.. : ..+pat_sz]                          → stitch pattern (raw bytes)
 
-        All three fields are stored as lowercase hex strings in the CardMemorySlot.
+        All fields are stored as lowercase hex strings in the CardMemorySlot.
         Pattern parsing is deferred — the on-card binary stitch format is not yet known;
         pattern_xy / pattern_bytes will be empty until proper parsing is added.
         """
@@ -1185,11 +1205,14 @@ class CommProtocol:
         data     = bytes(self._write_card_data_accumulated)
         fn_len   = self._write_card_filename_len
         prev_sz  = self._write_card_preview_size
+        colors_sz = self._write_card_colors_size
         pat_sz   = self._write_card_pattern_size
 
         filename_bytes = data[:fn_len]
         preview_bytes  = data[fn_len : fn_len + prev_sz]
-        pattern_bytes  = data[fn_len + prev_sz : fn_len + prev_sz + pat_sz]
+        colors_start   = fn_len + prev_sz
+        colors_bytes   = data[colors_start : colors_start + colors_sz]
+        pattern_bytes  = data[colors_start + colors_sz : colors_start + colors_sz + pat_sz]
 
         try:
             filename = filename_bytes.rstrip(b'\x00').decode('latin-1', errors='replace')
@@ -1201,6 +1224,7 @@ class CommProtocol:
             pattern_type = self._write_card_stitch_type,
             header_raw   = self._write_card_header_raw.hex(),
             preview_raw  = preview_bytes.hex(),
+            colors_raw   = colors_bytes.hex(),
             pattern_raw  = pattern_bytes.hex(),
             filename     = filename,
         )
@@ -1215,7 +1239,7 @@ class CommProtocol:
 
         logger.info(
             f"Write Card: committed {self._write_card_stitch_type} slot {self._write_card_slot_id} "
-            f"(filename={filename!r}, preview={prev_sz} B, pattern={pat_sz} B)"
+            f"(filename={filename!r}, preview={prev_sz} B, colors={colors_sz} B, pattern={pat_sz} B)"
         )
         if self.on_card_changed:
             self.on_card_changed()
