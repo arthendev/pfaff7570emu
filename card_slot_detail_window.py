@@ -340,7 +340,7 @@ class CardSlotDetailWindow(QDialog):
                 22: ("y_min_symmetry",  "min(ys) with extra logic"),  # DONE
                 23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
                 24: ("size_preview",    "size(preview_image)"),       # DONE
-                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                26: ("n_colors",        "size(colors_raw)//288"),     # DONE
                 27: ("size_pattern",    "size(pattern_raw)"),         # DONE
                 29: ("size_name",       "size(filename)"),            # DONE
             }
@@ -359,12 +359,12 @@ class CardSlotDetailWindow(QDialog):
                 13: ("y_min_to_bound",  "0x36 - min(ys)"),            # DONE
                 15: ("span_y",          "max(ys) - min(ys)"),         # DONE
                 17: ("dy_0n",           "ys[n]-ys[0]"),               # DONE
-                19: ("long_scale",      "Unknown"),                # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
+                19: ("long_scale",      "Unknown"),                   # Unknown; enables longitudinal scaling, not understool how PCD calculates this value
                 20: ("y_min_neg",       "-min(ys)"),                  # DONE; see comment below (1)
                 22: ("fix_0x00",        "Fixed byte?"),               # DONE
                 23: ("dx_abs_max",      "max(abs(dxs))"),             # DONE
                 24: ("size_preview",    "size(preview_image)"),       # DONE
-                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                26: ("n_colors",        "size(colors_raw)//288"),     # DONE
                 27: ("size_pattern",    "size(pattern_raw)"),         # DONE
                 29: ("size_name",       "size(filename)"),            # DONE
             }
@@ -387,7 +387,7 @@ class CardSlotDetailWindow(QDialog):
                 5: ("fix_0x00",         "Fixed byte?"),               # DONE
                 6: ("type",             "Pattern type"),              # DONE
                 24: ("size_preview",    "size(preview_image)"),       # DONE
-                26: ("fix_0x01",        "Fixed byte?"),               # DONE
+                26: ("n_colors",        "size(colors_raw)//288"),     # DONE
                 27: ("size_pattern",    "size(pattern_raw)"),         # DONE
                 29: ("size_name",       "size(filename)"),            # DONE
             }
@@ -397,7 +397,7 @@ class CardSlotDetailWindow(QDialog):
 
         # Prepare card-specific expected value callables for header bytes
         ptype = self.slot.pattern_type
-        type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Small hoop': 0x03, 'Large hoop': 0x03}
+        type_map = {'9mm': 0x01, 'MAXI': 0x02, 'Embroidery': 0x03}
         card_expect = {
             'fix_0x00': 0x00,
             'fix_0x10': 0x10,
@@ -508,6 +508,8 @@ class CardSlotDetailWindow(QDialog):
                     stat_val_raw = len(self.slot.preview_raw) // 2
                 elif stat_key == 'size_name':
                     stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key == 'n_colors':
+                    stat_val_raw = len(self.slot.colors_raw) // (2 * 288) - 1 if self.slot.colors_raw else 1
                 elif stat_key in card_expect: # Override with card-specific expectation if defined
                     stat_val_raw = card_expect[stat_key]
 
@@ -532,6 +534,8 @@ class CardSlotDetailWindow(QDialog):
                     stat_val_raw = len(self.slot.preview_raw) // 2
                 elif stat_key == 'size_name':
                     stat_val_raw = len(self.slot.filename) + 1
+                elif stat_key == 'n_colors':
+                    stat_val_raw = len(self.slot.colors_raw) // (2 * 288) + 1 if self.slot.colors_raw else 1
                 elif stat_key in card_expect: # Override with card-specific expectation if defined
                     stat_val_raw = card_expect[stat_key]
 
