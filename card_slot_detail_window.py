@@ -161,6 +161,17 @@ class CardSlotDetailWindow(QDialog):
         self._preview_image_edit.setFixedHeight(80)
         raw_layout.addWidget(self._preview_image_edit)
 
+        # New field for memory card slots: thread colors (raw representation)
+        colors_label = QLabel("Thread colors (raw)")
+        colors_label.setFont(header_font)
+        raw_layout.addWidget(colors_label)
+
+        self._colors_edit = QTextEdit()
+        self._colors_edit.setReadOnly(True)
+        self._colors_edit.setFont(QFont("Courier New", 9))
+        self._colors_edit.setFixedHeight(80)
+        raw_layout.addWidget(self._colors_edit)
+
         raw_tab.setLayout(raw_layout)
         tabs.addTab(raw_tab, "Raw data")
 
@@ -911,6 +922,8 @@ class CardSlotDetailWindow(QDialog):
             self._format_pattern_raw(self.slot.pattern_raw, self.slot.pattern_type))
         # preview_raw is the raw preview field for card slots
         self._preview_image_edit.setPlainText(self.slot.preview_raw)
+        # colors_raw is the raw thread-colors field for card slots
+        self._colors_edit.setPlainText(getattr(self.slot, "colors_raw", ""))
 
     def refresh(self):
         """Re-read from the slot and update all displayed fields."""
