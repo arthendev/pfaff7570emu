@@ -339,7 +339,7 @@ class MemorySlot:
 class CardMemorySlot:
     """Represents a single slot on a memory card"""
     slot_id: int
-    pattern_type: str = ""  # "9mm", "MAXI", "Small hoop", "Large hoop"
+    pattern_type: str = ""  # "9mm", "MAXI", "Embroidery"
     header_raw: str = ""
     preview_raw: str = ""
     colors_raw: str = ""    # thread-colour block (raw bytes as hex), between preview and pattern
