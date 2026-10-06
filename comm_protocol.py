@@ -505,9 +505,6 @@ class CommProtocol:
         if cmd == self.CMD_LIST_MMEMORY:
             return self.handle_list_mmemory()
         if cmd == self.CMD_LIST_CARD:
-            if not self._card_available():
-                logger.info("List Card: no card available - sending NAK")
-                return self._card_disabled_response()
             return self.handle_list_card()
         if cmd.startswith(self.CMD_DELETE_PMEMORY_PREFIX) and len(cmd) == 4:
             return self.handle_delete_pmemory(cmd[2:])
@@ -881,6 +878,11 @@ class CommProtocol:
         <NMaxi> = number of MAXI patterns on the card
         Checksum is the 8-bit sum of all data bytes before CTRL_ETB, encoded as 2 ASCII hex chars.
         """
+        
+        if not self._card_available():
+            logger.info("List Card command received - no card available, sending NAK")
+            return self._card_disabled_response()
+        
         logger.info("List Card command received - sending response")
 
         card_no = self.machine_state.card_number
@@ -921,7 +923,7 @@ class CommProtocol:
         checksum = self._calculate_checksum(raw_bytes)
 
         response = bytearray()
-        response.append(0x06)
+        response.append(self.CTRL_ACK)
         response.extend(raw_bytes)
         response.append(self.CTRL_ETB)
         response.extend(f"{checksum:02X}".encode('ascii'))
