@@ -93,6 +93,22 @@ class CommProtocol:
     # holds (colour_count - 1) entries, since the first colour is implicit.
     CARD_COLOR_ENTRY_SIZE = 0x120
 
+    # Card-write error response bytes
+    CARD_RESPONSE_COPYRIGHT_PROTECTED = 0x00
+    CARD_RESPONSE_WRITE_PROTECTED = 0x04
+    CARD_RESPONSE_NOT_WRITABLE = 0x05
+    CARD_RESPONSE_NO_CARD_INSERTED = 0x08
+    CARD_RESPONSE_NOT_INITIALIZED = 0x09
+    CARD_RESPONSE_NO_FREE_SPACE = 0x0C
+
+    # Maximum allowed slot_id per pattern type before the card is reported as full.
+    # NOTE: these limits are GUESSED and were never cross-checked against a real
+    # machine and memory card.
+    # Maybe 9mm do not conflict with Embroidery and thus 9mm can go up to 0xFF
+    CARD_MAX_SLOT_9MM        = 0xC8 - 1    # 9mm slots are banked from 0x00, Embroidery starts at 0xC8
+    CARD_MAX_SLOT_MAXI       = 0xFF        # MAXI slots use the full byte range
+    CARD_MAX_SLOT_EMBROIDERY = 0xFF - 0xC8 # Embroidery slots are banked from 0xC8, so max slot is 0xFF
+
     # Bell identification strings per model
     MODEL_BELL_STRINGS = {
         "PFAFF Creative 7570":    "Copyright 1992 - 97       G.M. PFAFF AG Creative 7570B    Vers. 2.1", # From real machine
@@ -970,6 +986,10 @@ class CommProtocol:
           MAXI:       0xD0, slot_id
           Embroidery: 0xC0, slot_id + 0xC8   (slot 0 → 0xC8, slot 1 → 0xC9, …)
 
+        Response on full memory: CTRL_NAK + 0x0C ("not enough free space").
+        (The maximum slot_id per pattern type is guessed and was never cross-checked
+        against a real machine and memory card.)
+
         On error: CTRL_NAK, resets to idle.
         Transitions to _STATE_WRITE_CARD_DATA to await incoming data chunks.
         """
@@ -1000,18 +1020,32 @@ class CommProtocol:
         if self._write_card_stitch_type == "9mm":
             space = self.machine_state.card_9mm
             slot_id = self._next_free_card_slot(space)
+            max_slot_id = self.CARD_MAX_SLOT_9MM
             response_code = 0xC0
             response_slot = slot_id
         elif self._write_card_stitch_type == "MAXI":
             space = self.machine_state.card_maxi
             slot_id = self._next_free_card_slot(space)
+            max_slot_id = self.CARD_MAX_SLOT_MAXI
             response_code = 0xD0
             response_slot = slot_id
         else:  # Embroidery
             space = self.machine_state.card_embroidery
             slot_id = self._next_free_card_slot(space)
+            max_slot_id = self.CARD_MAX_SLOT_EMBROIDERY
             response_code = 0xC0
             response_slot = slot_id + 0xC8
+
+        # Full-memory condition: the next free slot_id exceeds the maximum the card
+        # can hold for this pattern type. (Max slot_ids are guessed and were never
+        # cross-checked against a real machine and memory card.)
+        if slot_id > max_slot_id:
+            logger.warning(
+                f"Write Card: {self._write_card_stitch_type} card has not enough free space "
+                f"(slot_id {slot_id} > max {max_slot_id}) - NAK 0x{self.CARD_RESPONSE_NO_FREE_SPACE:02X}"
+            )
+            self._abort_write_card()
+            return bytes([self.CTRL_NAK, self.CARD_RESPONSE_NO_FREE_SPACE])
 
         self._write_card_slot_id = slot_id
 
@@ -1026,12 +1060,15 @@ class CommProtocol:
         return bytes([self.CTRL_ACK, response_code, response_slot])
 
     def _next_free_card_slot(self, space) -> int:
-        """Return the lowest non-negative slot_id not currently occupied in the given card space."""
-        used = set(s.slot_id for s in space.slots)
-        i = 0
-        while i in used:
-            i += 1
-        return i
+        """Return the slot position the next written pattern will occupy.
+
+        Card spaces hold only occupied slots, packed contiguously (see
+        CardMemorySpace.set_slot/delete_slot), and slot IDs are dynamic positions
+        that are never persisted — every slot loaded from JSON starts with
+        slot_id == 0. The next free slot is therefore the current number of
+        occupied slots; scanning the per-slot slot_id values is not valid.
+        """
+        return len(space.slots)
 
     def _abort_write_card(self) -> None:
         """Abort an in-progress card write and return to idle state."""
