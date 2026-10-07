@@ -1259,7 +1259,6 @@ class CommProtocol:
             filename = ""
 
         slot = CardMemorySlot(
-            slot_id      = self._write_card_slot_id,
             pattern_type = self._write_card_stitch_type,
             header_raw   = self._write_card_header_raw.hex(),
             preview_raw  = preview_bytes.hex(),
@@ -1269,12 +1268,16 @@ class CommProtocol:
         )
         slot.parse_pattern_data()  # no-op for hex-encoded raw binary; safe to call
 
+        # Store at the position the header assigned. For the normal flow this is
+        # the next free position (== len(slots)), so the slot is appended; if the
+        # header targeted an existing position (e.g. a hardcoded slot_id), that
+        # slot is overwritten instead.
         if self._write_card_stitch_type == "9mm":
-            self.machine_state.card_9mm.set_slot(slot)
+            self.machine_state.card_9mm.set_slot(slot, position=self._write_card_slot_id)
         elif self._write_card_stitch_type == "MAXI":
-            self.machine_state.card_maxi.set_slot(slot)
+            self.machine_state.card_maxi.set_slot(slot, position=self._write_card_slot_id)
         else:
-            self.machine_state.card_embroidery.set_slot(slot)
+            self.machine_state.card_embroidery.set_slot(slot, position=self._write_card_slot_id)
 
         logger.info(
             f"Write Card: committed {self._write_card_stitch_type} slot {self._write_card_slot_id} "

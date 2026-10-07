@@ -337,8 +337,13 @@ class MemorySlot:
 
 @dataclass
 class CardMemorySlot:
-    """Represents a single slot on a memory card"""
-    slot_id: int
+    """Represents a single slot on a memory card.
+
+    A slot does not carry its own id/position: that belongs to the containing
+    CardMemorySpace and is simply the index of the slot in its `slots` list.
+    This avoids a "always 0" dummy field on loaded slots and keeps JSON free
+    of positional data. Use CardMemorySpace.index_of(slot) to obtain it.
+    """
     pattern_type: str = ""  # "9mm", "MAXI", "Embroidery"
     header_raw: str = ""
     preview_raw: str = ""
@@ -660,9 +665,8 @@ class CardMemorySlot:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization.
-        
-        Note: slot_id is not stored — slot positions are dynamic and derived
-        from list order at load time.
+
+        Slot position is not stored — it is derived from list order at load time.
         """
         return {
             "pattern_type": self.pattern_type,
@@ -676,12 +680,11 @@ class CardMemorySlot:
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> 'CardMemorySlot':
         """Create CardMemorySlot from dictionary.
-        
-        slot_id is ignored from persisted data — it is assigned dynamically
-        based on list position by the caller.
+
+        Position is not part of the slot — it is the index within its parent
+        CardMemorySpace and is assigned naturally by list order on load.
         """
         slot = CardMemorySlot(
-            slot_id=0,
             pattern_type=data.get("pattern_type", ""),
             header_raw=data.get("header_raw", ""),
             preview_raw=data.get("preview_raw", ""),
@@ -707,12 +710,33 @@ class CardMemorySpace:
             return None
         return self.slots[position]
 
-    def set_slot(self, slot: CardMemorySlot) -> None:
-        """Append or replace a slot. We prefer to replace by matching slot_id
-        if present (for compatibility), otherwise append to the dynamic list."""
-        # assign parent reference and append to the dynamic list
+    def index_of(self, slot: CardMemorySlot) -> Optional[int]:
+        """Return the 0-based position of `slot` in this space, or None if absent.
+
+        This is the canonical way to obtain a slot's id/position — the slot
+        itself does not store one. Matching is by object identity so equal-looking
+        slots are distinguished.
+        """
+        for i, candidate in enumerate(self.slots):
+            if candidate is slot:
+                return i
+        return None
+
+    def set_slot(self, slot: CardMemorySlot, position: Optional[int] = None) -> None:
+        """Store a slot, optionally at an explicit position.
+
+        With `position` omitted the slot is appended (the next free position).
+        When `position` names an existing index (0 <= position < len(slots)) the
+        slot at that index is overwritten in place — this lets a card write
+        target a specific slot instead of always appending. Any other position
+        (including position == len(slots)) appends, which keeps the normal
+        "next free slot" flow unchanged.
+        """
         slot._parent = self
-        self.slots.append(slot)
+        if position is not None and 0 <= position < len(self.slots):
+            self.slots[position] = slot
+        else:
+            self.slots.append(slot)
 
     def delete_slot(self, position: int) -> None:
         """Delete the slot at the given position (0-based index). If out of range, do nothing."""
